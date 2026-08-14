@@ -471,7 +471,7 @@ def download_ticket_route():
     return send_file(img_io, mimetype='image/jpeg')
 
 # ==========================================
-# ROUTE 6: SECURE GATEKEEPER TICKET SCAN CHECKER
+# ROUTE 6: SECURE GATEKEEPER TICKET SCAN CHECKER (ONE-TIME SCAN LOCK)
 # ==========================================
 
 
@@ -479,6 +479,7 @@ def download_ticket_route():
 def verify_ticket_route(booking_id):
     scanned_device_user_agent = request.headers.get('User-Agent', '').lower()
 
+    # Strict hardware device signature fingerprint checker framework
     if MY_PHONE_SIGNATURE.lower() not in scanned_device_user_agent:
         print(
             f"Blocked scan attempt from unauthorized device: {scanned_device_user_agent}")
@@ -497,6 +498,32 @@ def verify_ticket_route(booking_id):
         m_title = MOVIES.get(t.get("movie_id", "m1"), {}).get(
             "movie_title", "Unknown Show")
 
+        # Grab the ticket's current scanning state (defaults to 'Active' if newly booked)
+        ticket_status = t.get("status", "Active")
+        checkin_time = t.get("checked_in_at", "")
+
+        # 🛑 FRAUD WARNING GATE: If the status is already 'Checked In', block entry immediately!
+        if ticket_status == "Checked In":
+            denied_template = """
+            <body style="background:#141414; color:white; font-family:Arial, sans-serif; text-align:center; padding-top:40px;">
+                <div style="background:#1F1F1F; max-width:400px; margin:0 auto; padding:30px; border-radius:8px; border-top:5px solid #FFCC00; text-align:left; box-shadow: 0 4px 10px rgba(0,0,0,0.5);">
+                    <div style="background:#FFCC00; color:black; font-weight:bold; padding:5px 10px; display:inline-block; border-radius:4px; margin-bottom:15px; font-size:13px;">&#9888; TICKET ALREADY USED</div>
+                    <h3 style="margin:0 0 15px 0; font-size:20px; color:#FFCC00;">Fraud Alert: Access Denied</h3>
+                    <p style="margin:8px 0; font-size:14px;"><strong style="color:#888;">Holder:</strong> {{ t.name }}</p>
+                    <p style="margin:8px 0; font-size:14px;"><strong style="color:#888;">Seats:</strong> <span style="color:#E50914; font-weight:bold;">{{ t.seats }}</span></p>
+                    <p style="margin:15px 0 0 0; font-size:12px; color:#FF4A4A; border-top:1px solid #333; padding-top:10px; font-weight:bold;">
+                        &#128680; Used Entry Pass Scanned at: {{ checkin_time }}
+                    </p>
+                </div>
+            </body>
+            """
+            return render_template_string(denied_template, t=t)
+
+        #  VALID FIRST-TIME ENTRY HANDSHAKE: Flip status tokens inside database mapping profiles
+        current_scan_time = datetime.now().strftime("%I:%M:%S %p")
+        t["status"] = "Checked In"
+        t["checked_in_at"] = current_scan_time
+
         approved_template = """
         <body style="background:#141414; color:white; font-family:Arial, sans-serif; text-align:center; padding-top:40px;">
             <div style="background:#1F1F1F; max-width:400px; margin:0 auto; padding:30px; border-radius:8px; border-top:5px solid #25D366; text-align:left; box-shadow: 0 4px 10px rgba(0,0,0,0.5);">
@@ -505,11 +532,13 @@ def verify_ticket_route(booking_id):
                 <p style="margin:8px 0; font-size:14px;"><strong style="color:#888;">Holder:</strong> {{ t.name }}</p>
                 <p style="margin:8px 0; font-size:14px;"><strong style="color:#888;">Seats:</strong> <span style="color:#E50914; font-weight:bold;">{{ t.seats }}</span></p>
                 <p style="margin:8px 0; font-size:14px;"><strong style="color:#888;">Phone:</strong> +{{ t.phone }}</p>
-                <p style="margin:15px 0 0 0; font-size:12px; color:#666; border-top:1px solid #333; padding-top:10px;"><strong>Scanned Stamp:</strong> {{ t.timestamp }}</p>
+                <p style="margin:15px 0 0 0; font-size:12px; color:#25D366; border-top:1px solid #333; padding-top:10px; font-weight:bold;">
+                    &#9989; Check-in Log Locked at: {{ current_scan_time }}
+                </p>
             </div>
         </body>
         """
-        return render_template_string(approved_template, t=t, title=m_title)
+        return render_template_string(approved_template, t=t, title=m_title, current_scan_time=current_scan_time)
 
     return """
     <body style="background:#141414; color:#E50914; font-family:Arial, sans-serif; text-align:center; padding-top:100px;">
