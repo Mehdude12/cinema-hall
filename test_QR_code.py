@@ -10,6 +10,8 @@ from flask import Flask, render_template_string, request, send_file, redirect, u
 import booking_data
 if not hasattr(booking_data, 'SAVED_BOOKINGS'):
     booking_data.SAVED_BOOKINGS = {}
+if not hasattr(booking_data, 'SAVED_MOVIES'):
+    booking_data.SAVED_MOVIES = {}
 
 app = Flask(__name__)
 app.secret_key = "cinema_vault_session_protection_string"
@@ -21,44 +23,47 @@ app.secret_key = "cinema_vault_session_protection_string"
 MY_PHONE_SIGNATURE = "Mozilla/5.0"
 
 # ==========================================
-# MULTI-MOVIE VISUAL SCHEDULING DATABASE
+# MULTI-MOVIE SCHEDULING MASTER DATABASE
 # ==========================================
-TICKET_PRICE_INR = 150
 NOW = datetime.now()
 
-MOVIES = {
+# DEFAULT MASTER BACKUP DICTIONARY
+DEFAULT_MOVIES = {
     "m1": {
         "movie_title": "Interstellar: Special Edition",
-        "show_time_obj": NOW + timedelta(hours=2),
+        "show_time_str": (NOW + timedelta(hours=2)).strftime("%I:%M %p"),
         "theatre": "Cinema 4 - Screen 2 (IMAX)",
-        "rows": ["A", "B", "C", "D", "E"],
+        "rows_str": "A,B,C,D,E",
         "seats_per_row": 23,
-        "total_seats": 115  # <-- Explicitly assigned to resolve Jinja errors!
+        "ticket_price": 150
     },
     "m2": {
         "movie_title": "Oppenheimer: 70mm Film",
-        "show_time_obj": NOW + timedelta(hours=3, minutes=30),
+        "show_time_str": (NOW + timedelta(hours=3, minutes=30)).strftime("%I:%M %p"),
         "theatre": "Cinema 1 - Screen 1 (IMAX)",
-        "rows": ["A", "B", "C", "D"],
+        "rows_str": "A,B,C,D",
         "seats_per_row": 17,
-        "total_seats": 68   # <-- Explicitly assigned to resolve Jinja errors!
+        "ticket_price": 150
     },
     "m3": {
         "movie_title": "Dune: Part Two",
-        "show_time_obj": NOW + timedelta(hours=5),
+        "show_time_str": (NOW + timedelta(hours=5)).strftime("%I:%M %p"),
         "theatre": "Cinema 3 - Screen 4 (Dolby)",
-        "rows": ["A", "B", "C", "D", "E", "F"],
+        "rows_str": "A,B,C,D,E,F",
         "seats_per_row": 19,
-        "total_seats": 114  # <-- Explicitly assigned to resolve Jinja errors!
+        "ticket_price": 150
     }
 }
+
+# Load saved movie configurations from disk if they exist; otherwise use defaults
+MOVIES = booking_data.SAVED_MOVIES if booking_data.SAVED_MOVIES else DEFAULT_MOVIES
 
 MASTER_DB = {
     "active_bookings": booking_data.SAVED_BOOKINGS,
     "seats_cache": {"m1": [], "m2": [], "m3": []}
 }
 
-# Re-populate local cache memory from disk backup files on startup
+# Re-populate local seat cache arrays from storage logs on startup
 for bkid, details in MASTER_DB["active_bookings"].items():
     m_id = details.get("movie_id", "m1")
     if m_id in MASTER_DB["seats_cache"]:
@@ -79,10 +84,23 @@ def save_data_on_shutdown():
         file.write(
             "# This file stores your complete booking details permanently\n")
         file.write(f"SAVED_BOOKINGS = {repr(MASTER_DB['active_bookings'])}\n")
+        file.write(f"SAVED_MOVIES = {repr(MOVIES)}\n")
     print("✅ [SYSTEM LOG] Data written successfully to booking_data.py!")
 
 
 atexit.register(save_data_on_shutdown)
+
+# Helper function to generate clean structural list rows for Jinja compiler templates
+
+
+def get_rows_list(movie_dict_item):
+    return [r.strip() for s in [movie_dict_item.get("rows_str", "A")] for r in s.split(",") if r.strip()]
+
+# Helper function to compute dynamic total seat limitations metric profiles
+
+
+def get_total_seats(movie_dict_item):
+    return len(get_rows_list(movie_dict_item)) * int(movie_dict_item.get("seats_per_row", 10))
 
 # ==========================================
 # ROUTE 1: HOMEPAGE (MOVIE GRID LISTING)
@@ -93,7 +111,6 @@ atexit.register(save_data_on_shutdown)
 def home():
     print(
         f"\n📱 [DEVICE TRACKER] Current phone signature is:\n{request.headers.get('User-Agent')}\n")
-    current_time = datetime.now()
 
     html_template = """
     <!DOCTYPE html>
@@ -108,31 +125,28 @@ def home():
             .movie-card { background: #1F1F1F; width: 280px; padding: 20px; border-radius: 8px; border-top: 4px solid #E50914; text-align: left; box-shadow: 0 4px 10px rgba(0,0,0,0.4); display: flex; flex-direction: column; justify-content: space-between; }
             .btn { display: block; text-align: center; padding: 10px; background: #E50914; color: white; font-weight: bold; text-decoration: none; border-radius: 4px; margin-top: 15px; }
             .btn:disabled, .btn.disabled { background: #555; cursor: not-allowed; }
-            .closed { border-top-color: #555; opacity: 0.6; }
         </style>
     </head>
     <body>
         <div class="container">
-            <h1 style="font-size: 28px; margin-bottom: 5px;">🍿 Cinema Ticket Vault</h1>
+            <h1 style="font-size: 28px; margin-bottom: 5px;">&#127887; Cinema Ticket Vault</h1>
             <p style="color:#aaa; margin-top:0;">Select a showtime to proceed with seat selections</p>
             
             <div class="movie-grid">
                 {% for mid, m in movies.items() %}
-                {% set closing_time = m.show_time_obj - timedelta(hours=1) %}
-                {% set is_closed = current_time >= closing_time %}
-                {% set remaining = m.total_seats - cache[mid]|length %}
+                {% set total_seats = calc_total(m) %}
+                {% set remaining = total_seats - cache[mid]|length %}
                 
-                <div class="movie-card {{ 'closed' if is_closed or remaining <= 0 }}">
+                <div class="movie-card">
                     <div>
                         <h3 style="margin:0 0 10px 0; min-height:50px;">{{ m.movie_title }}</h3>
-                        <p style="color:#aaa; font-size:13px; margin:5px 0;">📍 {{ m.theatre }}</p>
-                        <p style="color:#E50914; font-size:13px; font-weight:bold; margin:5px 0;">🕒 {{ m.show_time_obj.strftime('%I:%M %p') }}</p>
-                        <p style="font-size:13px; margin:5px 0;">🎟️ Seats: <strong>{{ remaining }}</strong> / {{ m.total_seats }}</p>
+                        <p style="color:#aaa; font-size:13px; margin:5px 0;">&#128205; {{ m.theatre }}</p>
+                        <p style="color:#E50914; font-size:13px; font-weight:bold; margin:5px 0;">&#128338; {{ m.show_time_str }}</p>
+                        <p style="color:#25D366; font-size:13px; font-weight:bold; margin:5px 0;">&#128176; &#8377;{{ m.ticket_price }}</p>
+                        <p style="font-size:13px; margin:5px 0;">&#127919; Seats: <strong>{{ remaining }}</strong> / {{ total_seats }}</p>
                     </div>
                     
-                    {% if is_closed %}
-                        <div class="btn disabled" style="background:#331212; color:#FF4A4A;">Closed</div>
-                    {% elif remaining <= 0 %}
+                    {% if remaining <= 0 %}
                         <div class="btn disabled" style="background:#333;">Sold Out</div>
                     {% else %}
                         <a href="/select/{{ mid }}" class="btn">Select Seats</a>
@@ -141,12 +155,12 @@ def home():
                 {% endfor %}
             </div>
             <br><br>
-            <a href="/admin" style="color: #666; text-decoration: none; font-size: 13px;">🔒 Access Admin Dashboard</a>
+            <a href="/admin" style="color: #666; text-decoration: none; font-size: 13px;">&#128274; Access Admin Dashboard</a>
         </div>
     </body>
     </html>
     """
-    return render_template_string(html_template, movies=MOVIES, cache=MASTER_DB["seats_cache"], current_time=current_time, timedelta=timedelta)
+    return render_template_string(html_template, movies=MOVIES, cache=MASTER_DB["seats_cache"], calc_total=get_total_seats)
 
 # ==========================================
 # ROUTE 2: VISUAL SEAT SELECTION SECTOR
@@ -160,7 +174,11 @@ def select_seats(movie_id):
 
     movie = MOVIES[movie_id]
     already_booked_seats = MASTER_DB["seats_cache"][movie_id]
-    remaining_count = movie["total_seats"] - len(already_booked_seats)
+
+    movie_rows = get_rows_list(movie)
+    seats_per_row = int(movie.get("seats_per_row", 10))
+    ticket_price = movie.get("ticket_price", 150)
+    remaining_count = get_total_seats(movie) - len(already_booked_seats)
 
     html_template = """
     <!DOCTYPE html>
@@ -172,20 +190,16 @@ def select_seats(movie_id):
             body { font-family: Arial, sans-serif; background-color: #141414; color: white; padding: 20px 10px; margin: 0; text-align: center; }
             .container { background: #1F1F1F; width: 100%; max-width: 850px; margin: 0 auto; padding: 25px; border-radius: 8px; border-top: 4px solid #E50914; box-sizing: border-box; }
             input[type="text"] { width: 100%; max-width: 300px; padding: 10px; margin: 10px 0; border-radius: 4px; border: 1px solid #333; background: #333; color: white; box-sizing: border-box; }
-            
             .screen { width: 80%; height: 8px; background: #555; margin: 20px auto 40px auto; border-radius: 4px; box-shadow: 0 4px 10px rgba(255,255,255,0.1); }
             .seating-chart { display: flex; flex-direction: column; gap: 12px; margin-bottom: 30px; overflow-x: auto; padding-bottom: 15px; }
             .seat-row { display: flex; justify-content: center; align-items: center; gap: 6px; min-width: 650px; }
             .row-label { width: 30px; font-weight: bold; color: #888; font-size: 14px; text-align: left; }
-            
             .seat-container { position: relative; width: 26px; height: 26px; }
             .seat-container input { position: absolute; opacity: 0; cursor: pointer; height: 0; width: 0; }
             .seat-design { position: absolute; top: 0; left: 0; height: 26px; width: 26px; background-color: #1F1F1F; border: 1px solid #25D366; color: #25D366; font-size: 10px; font-weight: bold; line-height: 24px; text-align: center; border-radius: 4px; transition: 0.2s; }
-            
             .seat-container:hover input ~ .seat-design { background-color: rgba(37, 211, 102, 0.2); }
             .seat-container input:checked ~ .seat-design { background-color: #25D366; color: black; box-shadow: 0 0 8px #25D366; }
             .seat-container input:disabled ~ .seat-design { background-color: #333 !important; border-color: #444 !important; color: #555 !important; cursor: not-allowed; box-shadow: none; }
-            
             .legend { display: flex; justify-content: center; gap: 20px; margin-bottom: 25px; font-size: 13px; color: #aaa; }
             .legend-item { display: flex; align-items: center; gap: 6px; }
             button { width: 100%; max-width: 300px; padding: 14px; background: #E50914; border: none; color: white; font-weight: bold; border-radius: 4px; cursor: pointer; font-size: 16px; margin-top: 15px; }
@@ -195,7 +209,7 @@ def select_seats(movie_id):
     <body>
         <div class="container">
             <h2 style="margin-bottom:5px;">{{ m.movie_title }}</h2>
-            <p style="color: #aaa; font-size: 14px; margin-top:0;">📍 {{ m.theatre }}</p>
+            <p style="color: #aaa; font-size: 14px; margin-top:0;">&#128205; {{ m.theatre }}</p>
             
             <div class="screen"></div>
             <p style="font-size:11px; color:#666; margin-top:-30px; margin-bottom:40px; letter-spacing:2px;">SCREEN THIS WAY</p>
@@ -210,11 +224,11 @@ def select_seats(movie_id):
                 <input type="hidden" name="movie_id" value="{{ mid }}">
                 
                 <div class="seating-chart">
-                    {% for row in m.rows %}
+                    {% for row in rows_list %}
                     <div class="seat-row">
                         <div class="row-label">{{ row }}</div>
                         
-                        {% for col in range(1, m.seats_per_row + 1) %}
+                        {% for col in range(1, seats_count + 1) %}
                             {% set seat_id = row ~ (col | string) %}
                             {% set is_booked = seat_id in booked_list %}
                             
@@ -239,20 +253,21 @@ def select_seats(movie_id):
                 
                 <button type="submit" id="submit-btn" disabled>Select seats above first</button>
                 <br><br>
-                <a href="/" style="color:#888; text-decoration:none; font-size:14px;">← Change Movie</a>
+                <a href="/" style="color:#888; text-decoration:none; font-size:14px;">&larr; Change Movie</a>
             </form>
         </div>
 
         <script>
         const checkboxes = document.querySelectorAll('input[type="checkbox"]');
         const submitBtn = document.getElementById('submit-btn');
+        const tPrice = {{ price_int }};
 
         checkboxes.forEach(cb => {
             cb.addEventListener('change', () => {
                 const checkedCount = document.querySelectorAll('input[type="checkbox"]:checked').length;
                 if (checkedCount > 0) {
                     submitBtn.removeAttribute('disabled');
-                    submitBtn.innerText = "Proceed to Pay for " + checkedCount + " Ticket(s)";
+                    submitBtn.innerText = "Proceed to Pay \u20b9" + (checkedCount * tPrice) + " for " + checkedCount + " Seat(s)";
                     submitBtn.style.background = "#25D366";
                 } else {
                     submitBtn.setAttribute('disabled', 'true');
@@ -265,7 +280,8 @@ def select_seats(movie_id):
     </body>
     </html>
     """
-    return render_template_string(html_template, m=movie, mid=movie_id, booked_list=already_booked_seats, remaining=remaining_count, min=min)
+    return render_template_string(html_template, m=movie, mid=movie_id, booked_list=already_booked_seats, rows_list=movie_rows, seats_count=seats_per_row, price_int=ticket_price, remaining=remaining_count, min=min)
+
 # ==========================================
 # ROUTE 3: SIMULATED SECURE PAYMENT GATEWAY
 # ==========================================
@@ -282,7 +298,9 @@ def simulate_payment():
     ticket_count = len(selected_seats_list)
     seats_comma_string = ", ".join(selected_seats_list)
 
-    total_price = TICKET_PRICE_INR * ticket_count
+    ticket_price = MOVIES.get(
+        movie_id, {"ticket_price": 150}).get("ticket_price", 150)
+    total_price = int(ticket_price) * ticket_count
 
     payment_template = """
     <!DOCTYPE html>
@@ -405,10 +423,9 @@ def download_ticket_route():
     bkid_param = request.args.get('bkid', 'UNKNOWN')
     should_download = request.args.get('download', 'false') == 'true'
 
-    movie_title = MOVIES.get(movie_id, MOVIES["m1"])["movie_title"]
-    theatre_name = MOVIES.get(movie_id, MOVIES["m1"])["theatre"]
-    show_time_str = MOVIES.get(movie_id, MOVIES["m1"])[
-        "show_time_obj"].strftime("%A, %b %d | %I:%M %p")
+    movie_title = MOVIES.get(movie_id, {}).get("movie_title", "Cinema Ticket")
+    theatre_name = MOVIES.get(movie_id, {}).get("theatre", "Cinema Arena")
+    show_time_str = MOVIES.get(movie_id, {}).get("show_time_str", "Today")
 
     ticket = Image.new("RGB", (750, 350), "#1A1A1A")
     draw = ImageDraw.Draw(ticket)
@@ -462,7 +479,6 @@ def download_ticket_route():
 def verify_ticket_route(booking_id):
     scanned_device_user_agent = request.headers.get('User-Agent', '').lower()
 
-    # Strict hardware device signature fingerprint checker framework [1.1]
     if MY_PHONE_SIGNATURE.lower() not in scanned_device_user_agent:
         print(
             f"Blocked scan attempt from unauthorized device: {scanned_device_user_agent}")
@@ -478,8 +494,8 @@ def verify_ticket_route(booking_id):
     active_records = MASTER_DB["active_bookings"]
     if booking_id in active_records:
         t = active_records[booking_id]
-        m_title = MOVIES.get(t.get("movie_id", "m1"),
-                             MOVIES["m1"])["movie_title"]
+        m_title = MOVIES.get(t.get("movie_id", "m1"), {}).get(
+            "movie_title", "Unknown Show")
 
         approved_template = """
         <body style="background:#141414; color:white; font-family:Arial, sans-serif; text-align:center; padding-top:40px;">
@@ -505,15 +521,14 @@ def verify_ticket_route(booking_id):
     """, 404
 
 # ==========================================
-# ROUTE 7: HIDDEN ADMIN SEATING DASHBOARD
+# ROUTE 7: HIDDEN ADMIN SEATING DASHBOARD + LIVE CONFIG EDITOR
 # ==========================================
 
 
-@app.route('/admin')
+@app.route('/admin', methods=['GET', 'POST'])
 def admin_dashboard():
     scanned_device_user_agent = request.headers.get('User-Agent', '').lower()
 
-    # Strict device dashboard authentication gate lock [1.1]
     if MY_PHONE_SIGNATURE.lower() not in scanned_device_user_agent:
         print(
             f"Blocked unauthorized dashboard access attempt from: {scanned_device_user_agent}")
@@ -526,15 +541,38 @@ def admin_dashboard():
         </body>
         """, 403
 
+    if request.method == 'POST':
+        m_id = request.form.get("update_movie_id")
+        if m_id in MOVIES:
+            MOVIES[m_id]["movie_title"] = request.form.get(
+                "movie_title").strip()
+            MOVIES[m_id]["show_time_str"] = request.form.get(
+                "show_time_str").strip()
+            MOVIES[m_id]["theatre"] = request.form.get("theatre").strip()
+            MOVIES[m_id]["rows_str"] = request.form.get(
+                "rows_str").strip().upper()
+            MOVIES[m_id]["seats_per_row"] = int(
+                request.form.get("seats_per_row"))
+            MOVIES[m_id]["ticket_price"] = int(
+                request.form.get("ticket_price"))
+            print(f"✨ [ADMIN CONFIG] Updated settings for {m_id} instantly!")
+            return redirect(url_for('admin_dashboard'))
+
     html_template = """
     <!DOCTYPE html>
     <html>
     <head>
-        <title>Admin Reporting Control</title>
+        <title>Admin Registry & Config Control</title>
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <style>
             body { font-family: Arial, sans-serif; background-color: #141414; color: white; padding: 40px 15px; margin: 0; }
             .wrapper { max-width: 1100px; margin: 0 auto; }
+            h2, h3 { color: white; border-bottom: 2px solid #333; padding-bottom: 8px; }
+            .config-section { display: flex; flex-wrap: wrap; gap: 15px; margin-bottom: 40px; justify-content: space-between; }
+            .config-form { background: #1F1F1F; border-radius: 6px; padding: 15px; width: 31%; box-sizing: border-box; border-top: 3px solid #25D366; }
+            label { font-size: 11px; font-weight: bold; color: #888; display: block; margin-top: 8px; }
+            input { width: 100%; padding: 6px; margin-top: 2px; background: #333; color: white; border: 1px solid #444; border-radius: 4px; box-sizing: border-box; }
+            .btn-save { width: 100%; margin-top: 12px; padding: 8px; background: #25D366; color: black; font-weight: bold; border: none; border-radius: 4px; cursor: pointer; }
             table { width: 100%; border-collapse: collapse; margin-top: 25px; background:#1F1F1F; box-shadow: 0 4px 10px rgba(0,0,0,0.4); }
             th, td { padding: 14px; border: 1px solid #333; text-align: left; font-size:14px; }
             th { background-color: #E50914; color: white; font-weight: bold; }
@@ -543,7 +581,39 @@ def admin_dashboard():
     </head>
     <body>
         <div class="wrapper">
-            <h2>&#128274; Security Registry Control Dashboard</h2>
+            <h2>&#128274; Master Theater Settings Configuration</h2>
+            <p style="color:#aaa; margin-top:0;">Modify active slot parameters, naming fields, and layout row charts directly from your device.</p>
+            
+            <div class="config-section">
+                {% for mid, m in movies.items() %}
+                <form class="config-form" method="POST">
+                    <input type="hidden" name="update_movie_id" value="{{ mid }}">
+                    <strong style="color: #25D366;">Slot: {{ mid | upper }}</strong>
+                    
+                    <label>MOVIE TITLE:</label>
+                    <input type="text" name="movie_title" value="{{ m.movie_title }}" required>
+                    
+                    <label>SHOWTIME TEXT:</label>
+                    <input type="text" name="show_time_str" value="{{ m.show_time_str }}" required>
+                    
+                    <label>AUDITORIUM / HALL:</label>
+                    <input type="text" name="theatre" value="{{ m.theatre }}" required>
+                    
+                    <label>GRID ROWS (Comma Separated):</label>
+                    <input type="text" name="rows_str" value="{{ m.rows_str }}" required>
+                    
+                    <label>SEATS PER ROW (Columns Count):</label>
+                    <input type="number" name="seats_per_row" value="{{ m.seats_per_row }}" required>
+                    
+                    <label>TICKET RATE (INR):</label>
+                    <input type="number" name="ticket_price" value="{{ m.ticket_price }}" required>
+                    
+                    <button type="submit" class="btn-save">&#128190; Update Slot</button>
+                </form>
+                {% endfor %}
+            </div>
+
+            <h3>&#128196; Active Seating Registry & Logs</h3>
             <div style="margin-top: 20px;">
                 <a href="/admin/wipe-logs" class="btn-wipe" onclick="return confirm('Wipe out all database log arrays entirely?');">&#128680; Wipe All Booking Data</a>
                 &nbsp;&nbsp;&nbsp;&nbsp;<a href="/" style="color:#aaa; text-decoration:none; font-size:14px;">&larr; Back to Client Homepage</a>
@@ -560,7 +630,7 @@ def admin_dashboard():
                 {% for bkid, t in logs.items() %}
                 <tr>
                     <td style="color:#25D366; font-family:monospace; font-weight:bold;">{{ bkid }}</td>
-                    <td>{{ titles[t.movie_id] if t.movie_id in titles else 'Unknown Show' }}</td>
+                    <td>{{ movies[t.movie_id]["movie_title"] if t.movie_id in movies else 'Unknown Show' }}</td>
                     <td>{{ t.name }}</td>
                     <td style="color:#E50914; font-weight:bold;">{{ t.seats }}</td>
                     <td>+{{ t.phone }}</td>
@@ -572,8 +642,7 @@ def admin_dashboard():
     </body>
     </html>
     """
-    movie_title_map = {mid: m["movie_title"] for mid, m in MOVIES.items()}
-    return render_template_string(html_template, logs=MASTER_DB["active_bookings"], titles=movie_title_map)
+    return render_template_string(html_template, logs=MASTER_DB["active_bookings"], movies=MOVIES)
 
 
 @app.route('/admin/wipe-logs')
@@ -587,7 +656,8 @@ def wipe_logs():
     with open("booking_data.py", "w", encoding="utf-8") as file:
         file.write(
             "# This file stores your complete booking details permanently\n")
-        file.write("SAVED_BOOKINGS = {}\n")
+        file.write(f"SAVED_BOOKINGS = {{}}\n")
+        file.write(f"SAVED_MOVIES = {repr(MOVIES)}\n")
     return redirect(url_for('admin_dashboard'))
 
 

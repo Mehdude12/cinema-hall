@@ -1,2 +1,3 @@
 # This file stores your complete booking details permanently
 SAVED_BOOKINGS = {}
+SAVED_MOVIES = {'m1': {'movie_title': 'Interstellar: Special Edition', 'show_time_str': '10:13 PM', 'theatre': 'Cinema 4 - Screen 2 (IMAX)', 'rows_str': 'A,B,C,D,E', 'seats_per_row': 23, 'ticket_price': 150}, 'm2': {'movie_title': 'Oppenheimer: 70mm Film', 'show_time_str': '11:43 PM', 'theatre': 'Cinema 1 - Screen 1 (IMAX)', 'rows_str': 'A,B,C,D', 'seats_per_row': 17, 'ticket_price': 150}, 'm3': {'movie_title': 'Dune: Part Two', 'show_time_str': '01:13 AM', 'theatre': 'Cinema 3 - Screen 4 (Dolby)', 'rows_str': 'A,B,C,D,E,F', 'seats_per_row': 19, 'ticket_price': 150}}
