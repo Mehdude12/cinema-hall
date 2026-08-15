@@ -154,9 +154,10 @@ def home():
                     <div>
                         <h3 style="margin:0 0 10px 0; min-height:50px;">{{ m.movie_title }}</h3>
                         <p style="color:#aaa; font-size:13px; margin:5px 0;">&#128205; {{ m.theatre }}</p>
-                        <p style="color:#E50914; font-size:13px; font-weight:bold; margin:5px 0;">&#128338; {{ m.show_time_str }}</p>
+                        <!-- FIX: Safely reads the custom literal time text string you type into the admin slot input! -->
+                        <p style="color:#E50914; font-size:13px; font-weight:bold; margin:5px 0;">&#128338; Showtime: {{ m.show_time_str }}</p>
                         <p style="color:#25D366; font-size:13px; font-weight:bold; margin:5px 0;">&#128176; &#8377;{{ m.ticket_price }}</p>
-                        <p style="font-size:13px; margin:5px 0;">&#127919; Seats: <strong>{{ remaining }}</strong> / {{ total_seats }}</p>
+                        <p style="font-size:13px; margin:5px 0;">&#127919; Seats Available: <strong>{{ remaining }}</strong> / {{ total_seats }}</p>
                     </div>
                     
                     {% if remaining <= 0 %}
@@ -174,7 +175,6 @@ def home():
     </html>
     """
     return render_template_string(html_template, movies=MOVIES, cache=MASTER_DB["seats_cache"], calc_total=get_total_seats)
-
 # ==========================================
 # ROUTE 2: VISUAL SEAT SELECTION SECTOR
 # ==========================================
@@ -190,8 +190,8 @@ def select_seats(movie_id):
 
     movie_rows = get_rows_list(movie)
     seats_per_row = int(movie.get("seats_per_row", 10))
-    ticket_price = movie.get("ticket_price", 150)
-    remaining_count = get_total_seats(movie) - len(already_booked_seats)
+    base_price = int(movie.get("ticket_price", 150))
+    premium_price = base_price + 100  # VIP Recliners cost ₹100 more than base rate
 
     html_template = """
     <!DOCTYPE html>
@@ -203,20 +203,33 @@ def select_seats(movie_id):
             body { font-family: Arial, sans-serif; background-color: #141414; color: white; padding: 20px 10px; margin: 0; text-align: center; }
             .container { background: #1F1F1F; width: 100%; max-width: 850px; margin: 0 auto; padding: 25px; border-radius: 8px; border-top: 4px solid #E50914; box-sizing: border-box; }
             input[type="text"] { width: 100%; max-width: 300px; padding: 10px; margin: 10px 0; border-radius: 4px; border: 1px solid #333; background: #333; color: white; box-sizing: border-box; }
+            
             .screen { width: 80%; height: 8px; background: #555; margin: 20px auto 40px auto; border-radius: 4px; box-shadow: 0 4px 10px rgba(255,255,255,0.1); }
             .seating-chart { display: flex; flex-direction: column; gap: 12px; margin-bottom: 30px; overflow-x: auto; padding-bottom: 15px; }
             .seat-row { display: flex; justify-content: center; align-items: center; gap: 6px; min-width: 650px; }
-            .row-label { width: 30px; font-weight: bold; color: #888; font-size: 14px; text-align: left; }
+            .row-label { width: 35px; font-weight: bold; color: #888; font-size: 13px; text-align: left; }
+            
+            /* DYNAMIC TIER CATEGORY STYLING */
             .seat-container { position: relative; width: 26px; height: 26px; }
             .seat-container input { position: absolute; opacity: 0; cursor: pointer; height: 0; width: 0; }
-            .seat-design { position: absolute; top: 0; left: 0; height: 26px; width: 26px; background-color: #1F1F1F; border: 1px solid #25D366; color: #25D366; font-size: 10px; font-weight: bold; line-height: 24px; text-align: center; border-radius: 4px; transition: 0.2s; }
-            .seat-container:hover input ~ .seat-design { background-color: rgba(37, 211, 102, 0.2); }
-            .seat-container input:checked ~ .seat-design { background-color: #25D366; color: black; box-shadow: 0 0 8px #25D366; }
+            .seat-design { position: absolute; top: 0; left: 0; height: 26px; width: 26px; background-color: #1F1F1F; font-size: 10px; font-weight: bold; line-height: 24px; text-align: center; border-radius: 4px; transition: 0.2s; }
+            
+            /* VIP RECLINERS: Gold Border Scheme */
+            .tier-vip .seat-design { border: 1px solid #FFD700; color: #FFD700; }
+            .tier-vip:hover input ~ .seat-design { background-color: rgba(255, 215, 0, 0.2); }
+            .tier-vip input:checked ~ .seat-design { background-color: #FFD700; color: black; box-shadow: 0 0 8px #FFD700; }
+            
+            /* CLASSIC SEATS: Original Green Border Scheme */
+            .tier-classic .seat-design { border: 1px solid #25D366; color: #25D366; }
+            .tier-classic:hover input ~ .seat-design { background-color: rgba(37, 211, 102, 0.2); }
+            .tier-classic input:checked ~ .seat-design { background-color: #25D366; color: black; box-shadow: 0 0 8px #25D366; }
+            
+            /* DISABLED STATES */
             .seat-container input:disabled ~ .seat-design { background-color: #333 !important; border-color: #444 !important; color: #555 !important; cursor: not-allowed; box-shadow: none; }
-            .legend { display: flex; justify-content: center; gap: 20px; margin-bottom: 25px; font-size: 13px; color: #aaa; }
+            
+            .legend { display: flex; justify-content: center; flex-wrap: wrap; gap: 15px; margin-bottom: 25px; font-size: 13px; color: #aaa; }
             .legend-item { display: flex; align-items: center; gap: 6px; }
-            button { width: 100%; max-width: 300px; padding: 14px; background: #E50914; border: none; color: white; font-weight: bold; border-radius: 4px; cursor: pointer; font-size: 16px; margin-top: 15px; }
-            button:disabled { background: #555; cursor: not-allowed; }
+            button { width: 100%; max-width: 350px; padding: 14px; background: #555; border: none; color: white; font-weight: bold; border-radius: 4px; cursor: pointer; font-size: 16px; margin-top: 15px; transition: 0.2s; }
         </style>
     </head>
     <body>
@@ -227,9 +240,10 @@ def select_seats(movie_id):
             <div class="screen"></div>
             <p style="font-size:11px; color:#666; margin-top:-30px; margin-bottom:40px; letter-spacing:2px;">SCREEN THIS WAY</p>
             
+            <!-- EXPANED CATEGORY LEGEND BAR -->
             <div class="legend">
-                <div class="legend-item"><div style="width:14px; height:14px; border:1px solid #25D366; border-radius:2px;"></div> Available</div>
-                <div class="legend-item"><div style="width:14px; height:14px; background:#25D366; border-radius:2px;"></div> Selected</div>
+                <div class="legend-item"><div style="width:14px; height:14px; border:1px solid #FFD700; border-radius:2px;"></div> VIP Recliner (&#8377;{{ p_price }})</div>
+                <div class="legend-item"><div style="width:14px; height:14px; border:1px solid #25D366; border-radius:2px;"></div> Classic Row (&#8377;{{ b_price }})</div>
                 <div class="legend-item"><div style="width:14px; height:14px; background:#333; border-radius:2px;"></div> Booked</div>
             </div>
 
@@ -238,15 +252,19 @@ def select_seats(movie_id):
                 
                 <div class="seating-chart">
                     {% for row in rows_list %}
+                    {# Rows A and B are hardcoded as VIP Tiers #}
+                    {% set is_vip = row in ['A', 'B'] %}
                     <div class="seat-row">
-                        <div class="row-label">{{ row }}</div>
+                        <div class="row-label">{{ row }} {{ '(VIP)' if is_vip else '' }}</div>
                         
                         {% for col in range(1, seats_count + 1) %}
                             {% set seat_id = row ~ (col | string) %}
                             {% set is_booked = seat_id in booked_list %}
                             
-                            <label class="seat-container">
-                                <input type="checkbox" name="selected_seats" value="{{ seat_id }}" {{ 'disabled' if is_booked }}>
+                            <label class="seat-container {{ 'tier-vip' if is_vip else 'tier-classic' }}">
+                                <!-- Stash individual seat cash rates as a metadata attribute tag -->
+                                <input type="checkbox" name="selected_seats" value="{{ seat_id }}" 
+                                       data-price="{{ p_price if is_vip else b_price }}" {{ 'disabled' if is_booked }}>
                                 <span class="seat-design">{{ "%02d" | format(col) }}</span>
                             </label>
                             
@@ -264,7 +282,7 @@ def select_seats(movie_id):
                 <label style="display:block; font-size:14px; font-weight:bold; margin-bottom:5px; margin-top:10px;">WhatsApp Phone Number:</label>
                 <input type="text" name="phone_number" placeholder="919876543210" required><br>
                 
-                <button type="submit" id="submit-btn" disabled>Select seats above first</button>
+                <button type="submit" id="submit-btn" disabled style="background:#444;">Select seats above first</button>
                 <br><br>
                 <a href="/" style="color:#888; text-decoration:none; font-size:14px;">&larr; Change Movie</a>
             </form>
@@ -273,19 +291,30 @@ def select_seats(movie_id):
         <script>
         const checkboxes = document.querySelectorAll('input[type="checkbox"]');
         const submitBtn = document.getElementById('submit-btn');
-        const tPrice = {{ price_int }};
 
         checkboxes.forEach(cb => {
             cb.addEventListener('change', () => {
-                const checkedCount = document.querySelectorAll('input[type="checkbox"]:checked').length;
+                let totalCost = 0;
+                let checkedCount = 0;
+                
+                // Read each checkbox dynamically and aggregate their corresponding tier prices
+                checkboxes.forEach(box => {
+                    if (box.checked) {
+                        totalCost += parseInt(box.getAttribute('data-price'));
+                        checkedCount++;
+                    }
+                });
+
                 if (checkedCount > 0) {
                     submitBtn.removeAttribute('disabled');
-                    submitBtn.innerText = "Proceed to Pay \u20b9" + (checkedCount * tPrice) + " for " + checkedCount + " Seat(s)";
+                    submitBtn.innerText = "Proceed to Pay \u20b9" + totalCost + " for " + checkedCount + " Seat(s)";
                     submitBtn.style.background = "#25D366";
+                    submitBtn.style.color = "black";
                 } else {
                     submitBtn.setAttribute('disabled', 'true');
                     submitBtn.innerText = "Select seats above first";
-                    submitBtn.style.background = "#E50914";
+                    submitBtn.style.background = "#444";
+                    submitBtn.style.color = "white";
                 }
             });
         });
@@ -293,7 +322,7 @@ def select_seats(movie_id):
     </body>
     </html>
     """
-    return render_template_string(html_template, m=movie, mid=movie_id, booked_list=already_booked_seats, rows_list=movie_rows, seats_count=seats_per_row, price_int=ticket_price, remaining=remaining_count, min=min)
+    return render_template_string(html_template, m=movie, mid=movie_id, booked_list=already_booked_seats, rows_list=movie_rows, seats_count=seats_per_row, b_price=base_price, p_price=premium_price)
 
 # ==========================================
 # ROUTE 3: SIMULATED SECURE PAYMENT GATEWAY
@@ -308,12 +337,21 @@ def simulate_payment():
         'phone_number').strip().replace("+", "").replace(" ", "")
 
     selected_seats_list = request.form.getlist('selected_seats')
-    ticket_count = len(selected_seats_list)
     seats_comma_string = ", ".join(selected_seats_list)
 
-    ticket_price = MOVIES.get(
-        movie_id, {"ticket_price": 150}).get("ticket_price", 150)
-    total_price = int(ticket_price) * ticket_count
+    # Grab the active slot price configs
+    movie_data = MOVIES.get(movie_id, {"ticket_price": 150})
+    base_price = int(movie_data.get("ticket_price", 150))
+    premium_price = base_price + 100
+
+    # BACKEND CALCULATION LOOP: Audit row letters natively to ensure price safety [1.1]
+    total_price = 0
+    for seat in selected_seats_list:
+        row_letter = seat[0].upper()  # Extract row token (e.g. 'A' from 'A12')
+        if row_letter in ['A', 'B']:
+            total_price += premium_price
+        else:
+            total_price += base_price
 
     payment_template = """
     <!DOCTYPE html>
@@ -651,7 +689,9 @@ def admin_dashboard():
                     <input type="text" name="movie_title" value="{{ m.movie_title }}" required>
                     
                     <label>SHOWTIME TEXT:</label>
-                    <input type="text" name="show_time_str" value="{{ m.show_time_str }}" required>
+                    <!-- FIX: Allows entering absolute literal times like '07:30 PM' or '4:00 PM' directly -->
+                    <input type="text" name="show_time_str" value="{{ m.show_time_str }}" placeholder="e.g., 07:30 PM or Evening 8 PM" required>
+
                     
                     <label>AUDITORIUM / HALL:</label>
                     <input type="text" name="theatre" value="{{ m.theatre }}" required>

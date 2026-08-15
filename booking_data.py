@@ -1,3 +1,3 @@
 # This file stores your complete booking details permanently
-SAVED_BOOKINGS = {'BKID1786727932': {'movie_id': 'm3', 'name': 'Penelope Clearwater', 'seats': 'D12, D13', 'phone': '9811898429', 'timestamp': '2026-08-14 10:48 PM', 'status': 'Checked In', 'checked_in_at': '10:49:20 PM'}, 'BKID1786771679': {'movie_id': 'm2', 'name': 'Penelope Clearwater', 'seats': 'C12', 'phone': '9811898429', 'timestamp': '2026-08-15 10:57 AM', 'status': 'Checked In', 'checked_in_at': '10:58:43 AM'}}
-SAVED_MOVIES = {'m1': {'movie_title': 'Interstellar: Special Edition', 'show_time_str': '12:48 AM', 'theatre': 'Cinema 4 - Screen 2 (IMAX)', 'rows_str': 'A,B,C,D,E', 'seats_per_row': 23, 'ticket_price': 150}, 'm2': {'movie_title': 'Oppenheimer: 70mm Film', 'show_time_str': '02:18 AM', 'theatre': 'Cinema 1 - Screen 1 (IMAX)', 'rows_str': 'A,B,C,D', 'seats_per_row': 17, 'ticket_price': 150}, 'm3': {'movie_title': 'Dune: Part Two', 'show_time_str': '03:48 AM', 'theatre': 'Cinema 3 - Screen 4 (Dolby)', 'rows_str': 'A,B,C,D,E,F', 'seats_per_row': 19, 'ticket_price': 150}}
+SAVED_BOOKINGS = {}
+SAVED_MOVIES = {}
