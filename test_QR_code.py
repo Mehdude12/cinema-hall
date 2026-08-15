@@ -6,77 +6,56 @@ import os
 from datetime import datetime, timedelta
 from flask import Flask, render_template_string, request, send_file, redirect, url_for, session
 
-
 # Safely import the separate permanent data storage file
 import booking_data
 if not hasattr(booking_data, 'SAVED_BOOKINGS'):
     booking_data.SAVED_BOOKINGS = {}
 if not hasattr(booking_data, 'SAVED_MOVIES'):
     booking_data.SAVED_MOVIES = {}
+if not hasattr(booking_data, 'SAVED_CONCESSIONS'):
+    booking_data.SAVED_CONCESSIONS = {}
+if not hasattr(booking_data, 'SAVED_PROMOS'):
+    booking_data.SAVED_PROMOS = {}
 
 app = Flask(__name__)
 app.secret_key = "cinema_vault_session_protection_string"
 
 # ==========================================
-# DEVICE GATEKEEPER MONITOR CONFIGURATION
-# ==========================================
-# Make sure your phone user-agent signature goes right between these quotes:
-MY_PHONE_SIGNATURE = "Android 10; K"
-# ==========================================
 # MASTER SECRET SECURITY PASSPHRASE
 # ==========================================
-# Change this word to any private password you want!
 ADMIN_PASSWORD = "lazy_panda_66_admin"
 
 # ==========================================
-# MASTER CRYPTO GATEKEEPER PASSKEY
-# ==========================================
-# Change this word to any secret passcode you want!
-ADMIN_SECRET_TOKEN = "lazy_panda_66_admin"
-
-
-# ==========================================
-# MULTI-MOVIE SCHEDULING MASTER DATABASE
+# MASTER PROGRAM CONFIGURATIONS & DATABASE
 # ==========================================
 NOW = datetime.now()
 
-# DEFAULT MASTER BACKUP DICTIONARY
 DEFAULT_MOVIES = {
-    "m1": {
-        "movie_title": "Interstellar: Special Edition",
-        "show_time_str": (NOW + timedelta(hours=2)).strftime("%I:%M %p"),
-        "theatre": "Cinema 4 - Screen 2 (IMAX)",
-        "rows_str": "A,B,C,D,E",
-        "seats_per_row": 23,
-        "ticket_price": 150
-    },
-    "m2": {
-        "movie_title": "Oppenheimer: 70mm Film",
-        "show_time_str": (NOW + timedelta(hours=3, minutes=30)).strftime("%I:%M %p"),
-        "theatre": "Cinema 1 - Screen 1 (IMAX)",
-        "rows_str": "A,B,C,D",
-        "seats_per_row": 17,
-        "ticket_price": 150
-    },
-    "m3": {
-        "movie_title": "Dune: Part Two",
-        "show_time_str": (NOW + timedelta(hours=5)).strftime("%I:%M %p"),
-        "theatre": "Cinema 3 - Screen 4 (Dolby)",
-        "rows_str": "A,B,C,D,E,F",
-        "seats_per_row": 19,
-        "ticket_price": 150
-    }
+    "m1": {"movie_title": "Interstellar: Special Edition", "show_time_str": "06:15 PM", "theatre": "Cinema 4 (IMAX)", "rows_str": "A,B,C,D,E", "seats_per_row": 23, "ticket_price": 150},
+    "m2": {"movie_title": "Oppenheimer: 70mm Film", "show_time_str": "03:30 PM", "theatre": "Cinema 1 (IMAX)", "rows_str": "A,B,C,D", "seats_per_row": 17, "ticket_price": 150},
+    "m3": {"movie_title": "Dune: Part Two", "show_time_str": "09:00 PM", "theatre": "Cinema 3 (Dolby)", "rows_str": "A,B,C,D,E,F", "seats_per_row": 19, "ticket_price": 150}
 }
 
-# Load saved movie configurations from disk if they exist; otherwise use defaults
+DEFAULT_CONCESSIONS = {
+    "snack1": {"item_name": "🍿 Large Salted Popcorn", "item_price": 180},
+    "snack2": {"item_name": "🥤 Ice Cold Drink", "item_price": 120},
+    "snack3": {"item_name": "🍫 Crispy Nachos Combo", "item_price": 250}
+}
+
+DEFAULT_PROMOS = {
+    "POPCORN20": {"discount_type": "percentage", "value": 20},
+    "CINEMAFAN": {"discount_type": "flat", "value": 50}
+}
+
 MOVIES = booking_data.SAVED_MOVIES if booking_data.SAVED_MOVIES else DEFAULT_MOVIES
+CONCESSIONS = booking_data.SAVED_CONCESSIONS if booking_data.SAVED_CONCESSIONS else DEFAULT_CONCESSIONS
+PROMOS = booking_data.SAVED_PROMOS if booking_data.SAVED_PROMOS else DEFAULT_PROMOS
 
 MASTER_DB = {
     "active_bookings": booking_data.SAVED_BOOKINGS,
     "seats_cache": {"m1": [], "m2": [], "m3": []}
 }
 
-# Re-populate local seat cache arrays from storage logs on startup
 for bkid, details in MASTER_DB["active_bookings"].items():
     m_id = details.get("movie_id", "m1")
     if m_id in MASTER_DB["seats_cache"]:
@@ -90,26 +69,20 @@ for bkid, details in MASTER_DB["active_bookings"].items():
 
 
 def save_data_on_shutdown():
-    data_file_path = "booking_data.py"
-    print(
-        "\n💾 [SYSTEM LOG] Closing server safely... Exporting data dictionary structures.")
-    with open(data_file_path, "w", encoding="utf-8") as file:
+    with open("booking_data.py", "w", encoding="utf-8") as file:
         file.write(
             "# This file stores your complete booking details permanently\n")
         file.write(f"SAVED_BOOKINGS = {repr(MASTER_DB['active_bookings'])}\n")
         file.write(f"SAVED_MOVIES = {repr(MOVIES)}\n")
-    print("✅ [SYSTEM LOG] Data written successfully to booking_data.py!")
+        file.write(f"SAVED_CONCESSIONS = {repr(CONCESSIONS)}\n")
+        file.write(f"SAVED_PROMOS = {repr(PROMOS)}\n")
 
 
 atexit.register(save_data_on_shutdown)
 
-# Helper function to generate clean structural list rows for Jinja compiler templates
-
 
 def get_rows_list(movie_dict_item):
     return [r.strip() for s in [movie_dict_item.get("rows_str", "A")] for r in s.split(",") if r.strip()]
-
-# Helper function to compute dynamic total seat limitations metric profiles
 
 
 def get_total_seats(movie_dict_item):
@@ -122,9 +95,7 @@ def get_total_seats(movie_dict_item):
 
 @app.route('/')
 def home():
-    print(
-        f"\n📱 [DEVICE TRACKER] Current phone signature is:\n{request.headers.get('User-Agent')}\n")
-
+    current_time = datetime.now()
     html_template = """
     <!DOCTYPE html>
     <html>
@@ -144,22 +115,18 @@ def home():
         <div class="container">
             <h1 style="font-size: 28px; margin-bottom: 5px;">&#127887; Cinema Ticket Vault</h1>
             <p style="color:#aaa; margin-top:0;">Select a showtime to proceed with seat selections</p>
-            
             <div class="movie-grid">
                 {% for mid, m in movies.items() %}
                 {% set total_seats = calc_total(m) %}
                 {% set remaining = total_seats - cache[mid]|length %}
-                
                 <div class="movie-card">
                     <div>
                         <h3 style="margin:0 0 10px 0; min-height:50px;">{{ m.movie_title }}</h3>
                         <p style="color:#aaa; font-size:13px; margin:5px 0;">&#128205; {{ m.theatre }}</p>
-                        <!-- FIX: Safely reads the custom literal time text string you type into the admin slot input! -->
                         <p style="color:#E50914; font-size:13px; font-weight:bold; margin:5px 0;">&#128338; Showtime: {{ m.show_time_str }}</p>
-                        <p style="color:#25D366; font-size:13px; font-weight:bold; margin:5px 0;">&#128176; &#8377;{{ m.ticket_price }}</p>
+                        <p style="color:#25D366; font-size:13px; font-weight:bold; margin:5px 0;">&#128176; Base Rate: &#8377;{{ m.ticket_price }}</p>
                         <p style="font-size:13px; margin:5px 0;">&#127919; Seats Available: <strong>{{ remaining }}</strong> / {{ total_seats }}</p>
                     </div>
-                    
                     {% if remaining <= 0 %}
                         <div class="btn disabled" style="background:#333;">Sold Out</div>
                     {% else %}
@@ -176,7 +143,7 @@ def home():
     """
     return render_template_string(html_template, movies=MOVIES, cache=MASTER_DB["seats_cache"], calc_total=get_total_seats)
 # ==========================================
-# ROUTE 2: VISUAL SEAT SELECTION SECTOR
+# ROUTE 2: VISUAL SEAT SELECTION & CONCESSIONS CART
 # ==========================================
 
 
@@ -184,63 +151,49 @@ def home():
 def select_seats(movie_id):
     if movie_id not in MOVIES:
         return redirect(url_for('home'))
-
     movie = MOVIES[movie_id]
     already_booked_seats = MASTER_DB["seats_cache"][movie_id]
-
     movie_rows = get_rows_list(movie)
     seats_per_row = int(movie.get("seats_per_row", 10))
     base_price = int(movie.get("ticket_price", 150))
-    premium_price = base_price + 100  # VIP Recliners cost ₹100 more than base rate
+    premium_price = base_price + 100
 
     html_template = """
     <!DOCTYPE html>
     <html>
     <head>
-        <title>Select Your Seats</title>
+        <title>Select Seats & Snacks</title>
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <style>
             body { font-family: Arial, sans-serif; background-color: #141414; color: white; padding: 20px 10px; margin: 0; text-align: center; }
             .container { background: #1F1F1F; width: 100%; max-width: 850px; margin: 0 auto; padding: 25px; border-radius: 8px; border-top: 4px solid #E50914; box-sizing: border-box; }
-            input[type="text"] { width: 100%; max-width: 300px; padding: 10px; margin: 10px 0; border-radius: 4px; border: 1px solid #333; background: #333; color: white; box-sizing: border-box; }
-            
-            .screen { width: 80%; height: 8px; background: #555; margin: 20px auto 40px auto; border-radius: 4px; box-shadow: 0 4px 10px rgba(255,255,255,0.1); }
+            input[type="text"] { width: 100%; padding: 10px; margin: 10px 0; border-radius: 4px; border: 1px solid #333; background: #333; color: white; box-sizing: border-box; font-size:16px; }
+            .screen { width: 80%; height: 8px; background: #555; margin: 20px auto 40px auto; border-radius: 4px; }
             .seating-chart { display: flex; flex-direction: column; gap: 12px; margin-bottom: 30px; overflow-x: auto; padding-bottom: 15px; }
             .seat-row { display: flex; justify-content: center; align-items: center; gap: 6px; min-width: 650px; }
             .row-label { width: 35px; font-weight: bold; color: #888; font-size: 13px; text-align: left; }
-            
-            /* DYNAMIC TIER CATEGORY STYLING */
             .seat-container { position: relative; width: 26px; height: 26px; }
-            .seat-container input { position: absolute; opacity: 0; cursor: pointer; height: 0; width: 0; }
-            .seat-design { position: absolute; top: 0; left: 0; height: 26px; width: 26px; background-color: #1F1F1F; font-size: 10px; font-weight: bold; line-height: 24px; text-align: center; border-radius: 4px; transition: 0.2s; }
-            
-            /* VIP RECLINERS: Gold Border Scheme */
+            .seat-container input { position: absolute; opacity: 0; height: 0; width: 0; }
+            .seat-design { position: absolute; top: 0; left: 0; height: 26px; width: 26px; background-color: #1F1F1F; font-size: 10px; font-weight: bold; line-height: 24px; text-align: center; border-radius: 4px; }
             .tier-vip .seat-design { border: 1px solid #FFD700; color: #FFD700; }
-            .tier-vip:hover input ~ .seat-design { background-color: rgba(255, 215, 0, 0.2); }
-            .tier-vip input:checked ~ .seat-design { background-color: #FFD700; color: black; box-shadow: 0 0 8px #FFD700; }
-            
-            /* CLASSIC SEATS: Original Green Border Scheme */
+            .tier-vip input:checked ~ .seat-design { background-color: #FFD700; color: black; }
             .tier-classic .seat-design { border: 1px solid #25D366; color: #25D366; }
-            .tier-classic:hover input ~ .seat-design { background-color: rgba(37, 211, 102, 0.2); }
-            .tier-classic input:checked ~ .seat-design { background-color: #25D366; color: black; box-shadow: 0 0 8px #25D366; }
-            
-            /* DISABLED STATES */
-            .seat-container input:disabled ~ .seat-design { background-color: #333 !important; border-color: #444 !important; color: #555 !important; cursor: not-allowed; box-shadow: none; }
-            
+            .tier-classic input:checked ~ .seat-design { background-color: #25D366; color: black; }
+            .seat-container input:disabled ~ .seat-design { background-color: #333 !important; border-color: #444 !important; color: #555 !important; cursor: not-allowed; }
             .legend { display: flex; justify-content: center; flex-wrap: wrap; gap: 15px; margin-bottom: 25px; font-size: 13px; color: #aaa; }
             .legend-item { display: flex; align-items: center; gap: 6px; }
-            button { width: 100%; max-width: 350px; padding: 14px; background: #555; border: none; color: white; font-weight: bold; border-radius: 4px; cursor: pointer; font-size: 16px; margin-top: 15px; transition: 0.2s; }
+            
+            .snack-box { background: #141414; padding: 15px; border-radius: 6px; margin: 25px auto; max-width: 500px; text-align: left; border: 1px solid #333; }
+            .snack-item { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px solid #222; }
+            button { width: 100%; max-width: 400px; padding: 14px; background: #444; border: none; color: white; font-weight: bold; border-radius: 4px; cursor: pointer; font-size: 16px; margin-top: 15px; }
         </style>
     </head>
     <body>
         <div class="container">
-            <h2 style="margin-bottom:5px;">{{ m.movie_title }}</h2>
-            <p style="color: #aaa; font-size: 14px; margin-top:0;">&#128205; {{ m.theatre }}</p>
-            
+            <h2>{{ m.movie_title }}</h2>
+            <p style="color: #aaa; font-size: 14px;">&#128205; {{ m.theatre }} | &#128338; {{ m.show_time_str }}</p>
             <div class="screen"></div>
-            <p style="font-size:11px; color:#666; margin-top:-30px; margin-bottom:40px; letter-spacing:2px;">SCREEN THIS WAY</p>
             
-            <!-- EXPANED CATEGORY LEGEND BAR -->
             <div class="legend">
                 <div class="legend-item"><div style="width:14px; height:14px; border:1px solid #FFD700; border-radius:2px;"></div> VIP Recliner (&#8377;{{ p_price }})</div>
                 <div class="legend-item"><div style="width:14px; height:14px; border:1px solid #25D366; border-radius:2px;"></div> Classic Row (&#8377;{{ b_price }})</div>
@@ -252,80 +205,82 @@ def select_seats(movie_id):
                 
                 <div class="seating-chart">
                     {% for row in rows_list %}
-                    {# Rows A and B are hardcoded as VIP Tiers #}
                     {% set is_vip = row in ['A', 'B'] %}
                     <div class="seat-row">
                         <div class="row-label">{{ row }} {{ '(VIP)' if is_vip else '' }}</div>
-                        
                         {% for col in range(1, seats_count + 1) %}
                             {% set seat_id = row ~ (col | string) %}
                             {% set is_booked = seat_id in booked_list %}
-                            
                             <label class="seat-container {{ 'tier-vip' if is_vip else 'tier-classic' }}">
-                                <!-- Stash individual seat cash rates as a metadata attribute tag -->
-                                <input type="checkbox" name="selected_seats" value="{{ seat_id }}" 
-                                       data-price="{{ p_price if is_vip else b_price }}" {{ 'disabled' if is_booked }}>
+                                <input type="checkbox" name="selected_seats" value="{{ seat_id }}" data-price="{{ p_price if is_vip else b_price }}" {{ 'disabled' if is_booked }}>
                                 <span class="seat-design">{{ "%02d" | format(col) }}</span>
                             </label>
-                            
-                            {% if col == 7 or col == 17 %}
-                                <div style="width: 25px;"></div>
-                            {% endif %}
+                            {% if col == 7 or col == 17 %}<div style="width: 25px;"></div>{% endif %}
                         {% endfor %}
                     </div>
                     {% endfor %}
                 </div>
-                
-                <label style="display:block; font-size:14px; font-weight:bold; margin-bottom:5px;">Enter Your Full Name:</label>
-                <input type="text" name="customer_name" placeholder="John Doe" required><br>
 
-                <label style="display:block; font-size:14px; font-weight:bold; margin-bottom:5px; margin-top:10px;">WhatsApp Phone Number:</label>
-                <input type="text" name="phone_number" placeholder="919876543210" required><br>
+                <div class="snack-box">
+                    <h3 style="margin-top:0; color:#E50914; font-size:16px;">&#127839; Food & Beverages Counter Add-ons</h3>
+                    {% for sid, snack in concessions.items() %}
+                    <div class="snack-item">
+                        <label><input type="checkbox" name="selected_snacks" value="{{ sid }}" data-price="{{ snack.item_price }}"> {{ snack.item_name }}</label>
+                        <span style="color:#25D366; font-weight:bold;">+&#8377;{{ snack.item_price }}</span>
+                    </div>
+                    {% endfor %}
+                </div>
+
+                <div style="margin: 20px auto; max-width: 500px; text-align: left;">
+                    <label style="font-weight:bold; font-size:14px; color:#aaa;">Apply Promo Coupon Code:</label>
+                    <input type="text" name="coupon_code" placeholder="e.g., POPCORN20" style="max-width:200px; text-transform:uppercase;">
+                </div>
                 
-                <button type="submit" id="submit-btn" disabled style="background:#444;">Select seats above first</button>
-                <br><br>
-                <a href="/" style="color:#888; text-decoration:none; font-size:14px;">&larr; Change Movie</a>
+                <div style="margin-top:20px;">
+                    <label style="display:block; font-size:14px; font-weight:bold; margin-bottom:5px;">Enter Your Full Name:</label>
+                    <input type="text" name="customer_name" placeholder="John Doe" required style="max-width:400px;"><br>
+                    <label style="display:block; font-size:14px; font-weight:bold; margin-bottom:5px; margin-top:10px;">WhatsApp Phone Number:</label>
+                    <input type="text" name="phone_number" placeholder="919876543210" required style="max-width:400px;"><br>
+                </div>
+                
+                <button type="submit" id="submit-btn" disabled>Select seats above first</button>
             </form>
         </div>
 
         <script>
-        const checkboxes = document.querySelectorAll('input[type="checkbox"]');
+        const checkboxes = document.querySelectorAll('input[name="selected_seats"]');
+        const snackboxes = document.querySelectorAll('input[name="selected_snacks"]');
         const submitBtn = document.getElementById('submit-btn');
 
-        checkboxes.forEach(cb => {
-            cb.addEventListener('change', () => {
-                let totalCost = 0;
-                let checkedCount = 0;
-                
-                // Read each checkbox dynamically and aggregate their corresponding tier prices
-                checkboxes.forEach(box => {
-                    if (box.checked) {
-                        totalCost += parseInt(box.getAttribute('data-price'));
-                        checkedCount++;
-                    }
-                });
+        function calculateCart() {
+            let totalCost = 0;
+            let checkedSeats = 0;
+            
+            checkboxes.forEach(box => { if (box.checked) { totalCost += parseInt(box.getAttribute('data-price')); checkedSeats++; } });
+            snackboxes.forEach(box => { if (box.checked) { totalCost += parseInt(box.getAttribute('data-price')); } });
 
-                if (checkedCount > 0) {
-                    submitBtn.removeAttribute('disabled');
-                    submitBtn.innerText = "Proceed to Pay \u20b9" + totalCost + " for " + checkedCount + " Seat(s)";
-                    submitBtn.style.background = "#25D366";
-                    submitBtn.style.color = "black";
-                } else {
-                    submitBtn.setAttribute('disabled', 'true');
-                    submitBtn.innerText = "Select seats above first";
-                    submitBtn.style.background = "#444";
-                    submitBtn.style.color = "white";
-                }
-            });
-        });
+            if (checkedSeats > 0) {
+                submitBtn.removeAttribute('disabled');
+                submitBtn.innerText = "Proceed to Pay \u20b9" + totalCost + " for " + checkedSeats + " Ticket(s)";
+                submitBtn.style.background = "#25D366";
+                submitBtn.style.color = "black";
+            } else {
+                submitBtn.setAttribute('disabled', 'true');
+                submitBtn.innerText = "Select seats above first";
+                submitBtn.style.background = "#444";
+                submitBtn.style.color = "white";
+            }
+        }
+        checkboxes.forEach(cb => cb.addEventListener('change', calculateCart));
+        snackboxes.forEach(sb => sb.addEventListener('change', calculateCart));
         </script>
     </body>
     </html>
     """
-    return render_template_string(html_template, m=movie, mid=movie_id, booked_list=already_booked_seats, rows_list=movie_rows, seats_count=seats_per_row, b_price=base_price, p_price=premium_price)
+    return render_template_string(html_template, m=movie, mid=movie_id, booked_list=already_booked_seats, rows_list=movie_rows, seats_count=seats_per_row, b_price=base_price, p_price=premium_price, concessions=CONCESSIONS)
 
 # ==========================================
-# ROUTE 3: SIMULATED SECURE PAYMENT GATEWAY
+# ROUTE 3: SIMULATED SECURE PAYMENT GATEWAY (FIXED VARIABLE NAME)
 # ==========================================
 
 
@@ -335,23 +290,41 @@ def simulate_payment():
     customer_name = request.form.get('customer_name').strip()
     user_phone = request.form.get(
         'phone_number').strip().replace("+", "").replace(" ", "")
+    coupon_entered = request.form.get('coupon_code', '').strip().upper()
 
-    selected_seats_list = request.form.getlist('selected_seats')
-    seats_comma_string = ", ".join(selected_seats_list)
+    selected_seats = request.form.getlist('selected_seats')
+    selected_snacks = request.form.getlist('selected_snacks')
 
-    # Grab the active slot price configs
     movie_data = MOVIES.get(movie_id, {"ticket_price": 150})
     base_price = int(movie_data.get("ticket_price", 150))
     premium_price = base_price + 100
 
-    # BACKEND CALCULATION LOOP: Audit row letters natively to ensure price safety [1.1]
-    total_price = 0
-    for seat in selected_seats_list:
-        row_letter = seat[0].upper()  # Extract row token (e.g. 'A' from 'A12')
-        if row_letter in ['A', 'B']:
-            total_price += premium_price
+    subtotal = 0
+    for seat in selected_seats:
+        subtotal += premium_price if seat.upper() in ['A', 'B'] else base_price
+
+    snack_names_list = []
+    for sid in selected_snacks:
+        if sid in CONCESSIONS:
+            subtotal += int(CONCESSIONS[sid]["item_price"])
+            snack_names_list.append(CONCESSIONS[sid]["item_name"])
+
+    # FIXED: This matches the string variable token loaded below [1.1]
+    seats_str = ", ".join(selected_seats)
+    snacks_string = ", ".join(snack_names_list) if snack_names_list else "None"
+
+    discount_applied = 0
+    promo_msg = "None"
+    if coupon_entered in PROMOS:
+        rules = PROMOS[coupon_entered]
+        if rules["discount_type"] == "percentage":
+            discount_applied = int(subtotal * (rules["value"] / 100))
+            promo_msg = f"{coupon_entered} (-{rules['value']}% Code Applied)"
         else:
-            total_price += base_price
+            discount_applied = int(rules["value"])
+            promo_msg = f"{coupon_entered} (-&#8377;{rules['value']} Flat Code Applied)"
+
+    final_payable_amount = max(0, subtotal - discount_applied)
 
     payment_template = """
     <!DOCTYPE html>
@@ -361,10 +334,10 @@ def simulate_payment():
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <style>
             body { font-family: Arial, sans-serif; background-color: #f4f6f9; color: #333; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
-            .gateway-card { background: white; width: 100%; max-width: 400px; padding: 25px; border-radius: 12px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); border-top: 5px solid #25D366; text-align: left; box-sizing: border-box; }
-            .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #f0f0f0; padding-bottom: 15px; margin-bottom: 20px; }
+            .gateway-card { background: white; width: 100%; max-width: 420px; padding: 25px; border-radius: 12px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); border-top: 5px solid #25D366; text-align: left; box-sizing: border-box; }
+            .header { border-bottom: 2px solid #f0f0f0; padding-bottom: 15px; margin-bottom: 15px; }
+            .row-cost { display:flex; justify-content:space-between; font-size:14px; color:#555; margin-bottom:6px; }
             .option { padding: 12px 15px; border: 1px solid #ddd; border-radius: 6px; margin-bottom: 12px; display: flex; align-items: center; font-weight: 500; }
-            .option:hover { background-color: #f9f9f9; border-color: #25D366; }
             .spinner { width: 40px; height: 40px; border: 4px solid #f3f3f3; border-top: 4px solid #25D366; border-radius: 50%; animation: spin 1s linear infinite; margin: 0 auto 15px; }
             @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
         </style>
@@ -372,34 +345,36 @@ def simulate_payment():
     <body>
         <div class="gateway-card" id="box">
             <div class="header">
-                <div><h3 style="margin:0; font-size:16px; color:#666;">Cinema Checkout</h3><small style="color:#999;">Seats: {{ seats_str }}</small></div>
-                <div style="font-size:22px; font-weight:bold;">&#8377;{{ price }}</div>
+                <h3 style="margin:0; color:#111;">Checkout Payment Summary</h3>
+                <small style="color:#888;">Seats: {{ seats_str }} | Snacks: {{ snacks_str }}</small>
             </div>
             
-            <p style="font-size:14px; color:#555; margin-bottom:15px; font-weight:bold;">Choose Payment Method:</p>
-            <div class="option"><input type="radio" name="pay-method" checked style="margin-right:10px;"> &#128241; UPI (GPay, PhonePe, Paytm)</div>
-            <div class="option"><input type="radio" name="pay-method" style="margin-right:10px;"> &#128179; Credit / Debit Card</div>
-            <div class="option"><input type="radio" name="pay-method" style="margin-right:10px;"> &#127974; Net Banking</div>
+            <div class="row-cost"><span>Cart Subtotal:</span><span>&#8377;{{ subtotal }}</span></div>
+            <div class="row-cost" style="color:#FF4A4A;"><span>Coupon Reduction:</span><span>-&#8377;{{ discount }} ({{ p_msg | safe }})</span></div>
+            <div class="row-cost" style="font-weight:bold; font-size:18px; color:black; border-top:1px dashed #ddd; padding-top:8px; margin-top:8px;">
+                <span>Total Amount:</span><span>&#8377;{{ final_amount }}</span>
+            </div>
+            <br>
+            <p style="font-size:13px; color:#555; margin-bottom:10px; font-weight:bold;">Select Wallet Gateway:</p>
+            <div class="option"><input type="radio" checked style="margin-right:10px;"> 📱 UPI (GPay, PhonePe, Paytm)</div>
+            <div class="option"><input type="radio" style="margin-right:10px;"> 💳 Credit / Debit Card</div>
             
-            <button style="width:100%; padding:14px; background:#25D366; border:none; color:white; font-weight:bold; border-radius:6px; cursor:pointer; font-size:16px; margin-top:10px;" onclick="pay()">Complete Simulation Payment</button>
+            <button style="width:100%; padding:14px; background:#25D366; border:none; color:black; font-weight:bold; border-radius:6px; cursor:pointer; font-size:16px; margin-top:10px;" onclick="pay()">Complete Simulation Payment</button>
         </div>
-        
-        <div class="gateway-card" id="load" style="display:none; text-align:center;">
-            <div class="spinner"></div><h3>Processing Simulation...</h3>
-        </div>
+        <div class="gateway-card" id="load" style="display:none; text-align:center;"><div class="spinner"></div><h3>Processing Simulation...</h3></div>
         <script>
         function pay() {
             document.getElementById('box').style.display = 'none';
             document.getElementById('load').style.display = 'block';
             setTimeout(function() {
-                window.location.href = "/success?mid=" + "{{ mid }}" + "&seats=" + encodeURIComponent("{{ seats_str }}") + "&name=" + encodeURIComponent("{{ name }}") + "&phone=" + encodeURIComponent("{{ phone }}");
+                window.location.href = "/success?mid=" + "{{ mid }}" + "&seats=" + encodeURIComponent("{{ seats_str }}") + "&snacks=" + encodeURIComponent("{{ snacks_str }}") + "&name=" + encodeURIComponent("{{ name }}") + "&phone=" + encodeURIComponent("{{ phone }}");
             }, 2500);
         }
         </script>
     </body>
     </html>
     """
-    return render_template_string(payment_template, price=total_price, seats_str=seats_comma_string, name=customer_name, mid=movie_id, phone=user_phone)
+    return render_template_string(payment_template, subtotal=subtotal, discount=discount_applied, p_msg=promo_msg, final_amount=final_payable_amount, seats_str=seats_str, snacks_str=snacks_string, name=customer_name, mid=movie_id, phone=user_phone)
 
 # ==========================================
 # ROUTE 4: CONFIRMATION PREVIEW
@@ -410,24 +385,20 @@ def simulate_payment():
 def success():
     movie_id = request.args.get('mid', 'm1')
     seats_string = request.args.get('seats', 'A1')
+    snacks_string = request.args.get('snacks', 'None')
     customer_name = request.args.get('name', 'Guest')
     user_phone = request.args.get('phone', 'N/A')
 
     incoming_seats_list = [s.strip()
                            for s in seats_string.split(",") if s.strip()]
     MASTER_DB["seats_cache"][movie_id].extend(incoming_seats_list)
-
     booking_id = f"BKID{int(time.time())}"
 
     MASTER_DB["active_bookings"][booking_id] = {
-        "movie_id": movie_id,
-        "name": customer_name,
-        "seats": seats_string,
-        "phone": user_phone,
-        "timestamp": datetime.now().strftime("%Y-%m-%d %I:%M %p")
+        "movie_id": movie_id, "name": customer_name, "seats": seats_string, "snacks": snacks_string, "phone": user_phone, "timestamp": datetime.now().strftime("%Y-%m-%d %I:%M %p")
     }
 
-    img_src = f"/download-ticket?seats={urllib.parse.quote(seats_string)}&name={urllib.parse.quote(customer_name)}&mid={movie_id}&bkid={booking_id}"
+    img_src = f"/download-ticket?seats={urllib.parse.quote(seats_string)}&snacks={urllib.parse.quote(snacks_string)}&name={urllib.parse.quote(customer_name)}&mid={movie_id}&bkid={booking_id}"
     dl_src = f"{img_src}&download=true"
 
     success_template = """
@@ -439,15 +410,14 @@ def success():
         <style>
             body { font-family: Arial, sans-serif; background-color: #141414; color: white; text-align: center; padding: 20px 10px; margin: 0; }
             .card { background: #1F1F1F; width: 100%; max-width: 520px; margin: 20px auto; padding: 25px; border-radius: 8px; border-top: 4px solid #25D366; box-shadow: 0 4px 10px rgba(0,0,0,0.5); box-sizing: border-box; }
-            .btn { display: inline-block; width: 100%; max-width: 280px; padding: 14px; background-color: #E50914; color: white; text-decoration: none; border-radius: 5px; font-weight: bold; margin-top: 20px; font-size: 16px; box-sizing: border-box; }
-            .btn:hover { background-color: #b80710; }
-            .ticket-preview { width: 100%; max-width: 480px; height: auto; margin-top: 15px; border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.6); display: block; margin-left: auto; margin-right: auto; }
+            .btn { display: inline-block; width: 100%; max-width: 280px; padding: 14px; background-color: #E50914; color: white; text-decoration: none; border-radius: 5px; font-weight: bold; margin-top: 20px; font-size: 16px; }
+            .ticket-preview { width: 100%; max-width: 480px; height: auto; margin-top: 15px; border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.6); display: block; margin: 15px auto; }
         </style>
     </head>
     <body>
         <div class="card">
             <h1 style="color: #25D366; font-size: 24px;">&#127881; Seats Confirmed!</h1>
-            <p>Thank you <strong>{{ name }}</strong>. Your positions (<strong>{{ seats }}</strong>) are locked.</p>
+            <p>Thank you <strong>{{ name }}</strong>. Your configuration is locked layout.</p>
             <img src="{{ img_src }}" alt="Movie Ticket" class="ticket-preview">
             <hr style="border-color: #333; margin: 20px 0;">
             <a href="{{ dl_src }}" class="btn">&#128131; Download Ticket Image</a><br><br>
@@ -456,10 +426,10 @@ def success():
     </body>
     </html>
     """
-    return render_template_string(success_template, seats=seats_string, name=customer_name, img_src=img_src, dl_src=dl_src)
+    return render_template_string(success_template, name=customer_name, img_src=img_src, dl_src=dl_src)
 
 # ==========================================
-# ROUTE 5: THE CORE TICKET COMPILER ENGINE
+# ROUTE 5: THE TICKET IMAGE COMPILER (WITH SNACK PRINT SUPPORT)
 # ==========================================
 
 
@@ -469,6 +439,7 @@ def download_ticket_route():
     import qrcode
 
     seats_param = request.args.get('seats', 'Standard Pass')
+    snacks_param = request.args.get('snacks', 'None')
     name_param = request.args.get('name', 'Guest')
     movie_id = request.args.get('mid', 'm1')
     bkid_param = request.args.get('bkid', 'UNKNOWN')
@@ -478,33 +449,37 @@ def download_ticket_route():
     theatre_name = MOVIES.get(movie_id, {}).get("theatre", "Cinema Arena")
     show_time_str = MOVIES.get(movie_id, {}).get("show_time_str", "Today")
 
-    ticket = Image.new("RGB", (750, 350), "#1A1A1A")
+    ticket = Image.new("RGB", (750, 360), "#1A1A1A")
     draw = ImageDraw.Draw(ticket)
 
     try:
         font_title = ImageFont.truetype("Apple_Chancery.ttf", 34)
-        font_body = ImageFont.truetype("Arial.ttf", 16)
-        font_label = ImageFont.truetype("Arial.ttf", 12)
+        font_body = ImageFont.truetype("Arial.ttf", 15)
+        font_label = ImageFont.truetype("Arial.ttf", 11)
     except IOError:
         try:
             font_title = ImageFont.truetype("georgia.ttf", 30)
-            font_body = ImageFont.truetype("arial.ttf", 16)
-            font_label = ImageFont.truetype("arial.ttf", 12)
+            font_body = ImageFont.truetype("arial.ttf", 15)
+            font_label = ImageFont.truetype("arial.ttf", 11)
         except IOError:
             font_title = font_body = font_label = ImageFont.load_default()
 
     draw.rectangle([(0, 0), (750, 15)], fill="#E50914")
     draw.text((40, 35), movie_title, fill="#FFFFFF", font=font_title)
-    draw.text((40, 100), "TICKET HOLDER", fill="#888888", font=font_label)
-    draw.text((40, 120), name_param, fill="#FFFFFF", font=font_body)
-    draw.text((40, 165), "DATE, TIME & CINEMA",
+    draw.text((40, 95), "TICKET HOLDER", fill="#888888", font=font_label)
+    draw.text((40, 115), name_param, fill="#FFFFFF", font=font_body)
+    draw.text((40, 155), "DATE, TIME & CINEMA",
               fill="#888888", font=font_label)
-    draw.text((40, 185), f"{show_time_str} | {theatre_name}",
+    draw.text((40, 175), f"{show_time_str} | {theatre_name}",
               fill="#FFFFFF", font=font_body)
-    draw.text((40, 240), "SEATS ALLOCATED", fill="#888888", font=font_label)
-    draw.text((40, 260), seats_param, fill="#E50914", font=font_body)
+    draw.text((40, 215), "SEATS SELECTED", fill="#888888", font=font_label)
+    draw.text((40, 235), seats_param, fill="#E50914", font=font_body)
 
-    # REMOVED KEY: The validation URL points to a clean route path with no ?key parameters attached
+    # Draw Concession food orders on the ticket file pass [1.1]
+    draw.text((40, 275), "SNACK BAR RELEASES COUNTER",
+              fill="#888888", font=font_label)
+    draw.text((40, 295), snacks_param, fill="#25D366", font=font_body)
+
     validation_url = f"{request.url_root}verify/{bkid_param}"
     qr = qrcode.QRCode(
         version=1, error_correction=qrcode.constants.ERROR_CORRECT_M, box_size=6, border=2)
@@ -512,7 +487,7 @@ def download_ticket_route():
     qr.make(fit=True)
     qr_img = qr.make_image(
         fill_color="black", back_color="white").convert('RGB')
-    ticket.paste(qr_img, (510, (350 - qr_img.height) // 2))
+    ticket.paste(qr_img, (510, (360 - qr_img.height) // 2))
 
     img_io = io.BytesIO()
     ticket.convert("RGB").save(img_io, 'JPEG')
@@ -522,214 +497,220 @@ def download_ticket_route():
         return send_file(img_io, mimetype='image/jpeg', as_attachment=True, download_name='movie_ticket.jpg')
     return send_file(img_io, mimetype='image/jpeg')
 
+# ==========================================
+# ROUTE 6: SECURE GATEKEEPER SCAN CHECKER (ONE-TIME VERIFIER)
+# ==========================================
 
-# ==========================================
-# ROUTE 6: SECURE GATEKEEPER TICKET SCAN CHECKER (PASSWORD PROTECTED SESSION)
-# ==========================================
+
 @app.route('/verify/<booking_id>', methods=['GET', 'POST'])
 def verify_ticket_route(booking_id):
-
-    # 1. HANDLE PASSCODE SUBMISSIONS AT THE SCAN GATEWAY WALL
     if request.method == 'POST' and 'login_password' in request.form:
-        input_pass = request.form.get('login_password').strip()
-        if input_pass == ADMIN_PASSWORD:
+        if request.form.get('login_password').strip() == ADMIN_PASSWORD:
             session['admin_logged_in'] = True
-            print(
-                "🔑 [SCANNER LOG] Guard password verified via QR code link! Session opened.")
             return redirect(url_for('verify_ticket_route', booking_id=booking_id))
         else:
-            print(
-                "🛑 [SCANNER ALERT] Unauthorized person tried entering an incorrect password on a QR link!")
             return render_template_string(admin_login_template(), error="Incorrect password! Try again.")
 
-    # 2. ENFORCE SYSTEM LOGIN WALL: If your phone hasn't logged in yet, force the password screen!
     if not session.get('admin_logged_in'):
         return render_template_string(admin_login_template())
 
-    # 3. IF LOGGED IN, PROCEED WITH THE SECURE ONE-TIME ENTRY SCANNER CHECK
     active_records = MASTER_DB["active_bookings"]
     if booking_id in active_records:
         t = active_records[booking_id]
         m_title = MOVIES.get(t.get("movie_id", "m1"), {}).get(
             "movie_title", "Unknown Show")
-
         ticket_status = t.get("status", "Active")
         checkin_time = t.get("checked_in_at", "")
 
-        # 🛑 ONE-TIME SCAN FRAUD LOCK: Blocks duplicates even if you are logged in as admin
         if ticket_status == "Checked In":
             denied_template = """
             <body style="background:#141414; color:white; font-family:Arial, sans-serif; text-align:center; padding-top:40px;">
-                <div style="background:#1F1F1F; max-width:400px; margin:0 auto; padding:30px; border-radius:8px; border-top:5px solid #FFCC00; text-align:left; box-shadow: 0 4px 10px rgba(0,0,0,0.5);">
+                <div style="background:#1F1F1F; max-width:400px; margin:0 auto; padding:30px; border-radius:8px; border-top:5px solid #FFCC00; text-align:left;">
                     <div style="background:#FFCC00; color:black; font-weight:bold; padding:5px 10px; display:inline-block; border-radius:4px; margin-bottom:15px; font-size:13px;">&#9888; TICKET ALREADY USED</div>
-                    <h3 style="margin:0 0 15px 0; font-size:20px; color:#FFCC00;">Fraud Alert: Access Denied</h3>
-                    <p style="margin:8px 0; font-size:14px;"><strong style="color:#888;">Holder:</strong> {{ t.name }}</p>
-                    <p style="margin:8px 0; font-size:14px;"><strong style="color:#888;">Seats:</strong> <span style="color:#E50914; font-weight:bold;">{{ t.seats }}</span></p>
-                    <p style="margin:15px 0 0 0; font-size:12px; color:#FF4A4A; border-top:1px solid #333; padding-top:10px; font-weight:bold;">
-                        &#128680; Used Entry Pass Scanned at: {{ checkin_time }}
-                    </p>
-                    <br>
-                    <a href="/" style="color:#666; text-decoration:none; font-size:13px;">&larr; Back to Cinema Home</a>
+                    <h3>Fraud Alert: Access Denied</h3>
+                    <p><strong style="color:#888;">Holder:</strong> {{ t.name }}</p>
+                    <p><strong style="color:#888;">Seats:</strong> <span style="color:#E50914;">{{ t.seats }}</span></p>
+                    <p><strong style="color:#888;">Snacks Pack:</strong> {{ t.get('snacks','None') }}</p>
+                    <p style="color:#FF4A4A; border-top:1px solid #333; padding-top:10px; font-weight:bold;">&#128680; Scanned and entry locked at: {{ checkin_time }}</p>
                 </div>
             </body>
             """
             return render_template_string(denied_template, t=t)
 
-        # VALID FIRST-TIME ENTRY HANDSHAKE: Logs current checking window time
         current_scan_time = datetime.now().strftime("%I:%M:%S %p")
         t["status"] = "Checked In"
         t["checked_in_at"] = current_scan_time
 
         approved_template = """
         <body style="background:#141414; color:white; font-family:Arial, sans-serif; text-align:center; padding-top:40px;">
-            <div style="background:#1F1F1F; max-width:400px; margin:0 auto; padding:30px; border-radius:8px; border-top:5px solid #25D366; text-align:left; box-shadow: 0 4px 10px rgba(0,0,0,0.5);">
-                <div style="background:#25D366; color:black; font-weight:bold; padding:5px 10px; display:inline-block; border-radius:4px; margin-bottom:15px; font-size:13px;">&nbsp; APPROVED ENTRY</div>
-                <h3 style="margin:0 0 15px 0; font-size:20px;">{{ title }}</h3>
-                <p style="margin:8px 0; font-size:14px;"><strong style="color:#888;">Holder:</strong> {{ t.name }}</p>
-                <p style="margin:8px 0; font-size:14px;"><strong style="color:#888;">Seats:</strong> <span style="color:#E50914; font-weight:bold;">{{ t.seats }}</span></p>
-                <p style="margin:8px 0; font-size:14px;"><strong style="color:#888;">Phone:</strong> +{{ t.phone }}</p>
-                <p style="margin:15px 0 0 0; font-size:12px; color:#25D366; border-top:1px solid #333; padding-top:10px; font-weight:bold;">
-                    &#9989; Check-in Log Locked at: {{ current_scan_time }}
-                </p>
-                <br>
-                <a href="/" style="color:#666; text-decoration:none; font-size:13px;">&larr; Back to Cinema Home</a>
+            <div style="background:#1F1F1F; max-width:400px; margin:0 auto; padding:30px; border-radius:8px; border-top:5px solid #25D366; text-align:left;">
+                <div style="background:#25D366; color:black; font-weight:bold; padding:5px 10px; display:inline-block; border-radius:4px; margin-bottom:15px;">&nbsp; APPROVED ENTRY</div>
+                <h3>{{ title }}</h3>
+                <p><strong style="color:#888;">Holder:</strong> {{ t.name }}</p>
+                <p><strong style="color:#888;">Seats:</strong> <span style="color:#E50914; font-weight:bold;">{{ t.seats }}</span></p>
+                <p><strong style="color:#888;">Snacks Pack:</strong> <span style="color:#25D366;">{{ t.get('snacks','None') }}</span></p>
+                <p style="color:#25D366; border-top:1px solid #333; padding-top:10px; font-weight:bold;">&#9989; Check-in Complete at: {{ current_scan_time }}</p>
             </div>
         </body>
         """
         return render_template_string(approved_template, t=t, title=m_title, current_scan_time=current_scan_time)
-
-    return """
-    <body style="background:#141414; color:#E50914; font-family:Arial, sans-serif; text-align:center; padding-top:100px;">
-        <div style="background:#1F1F1F; max-width:400px; margin:0 auto; padding:30px; border-radius:8px; border-top:5px solid #E50914; box-shadow: 0 4px 10px rgba(0,0,0,0.5);">
-            <h2>&nbsp; ACCESS DENIED</h2>
-            <p style="color:#aaa; font-size:14px;">The scanned log reference code was not registered in our database catalog files.</p>
-            <br>
-            <a href="/" style="color:#666; text-decoration:none; font-size:13px;">&larr; Back to Cinema Home</a>
-        </div>
-    </body>
-    """, 404
-
+    return "Ticket Not Found", 404
 # ==========================================
-# ROUTE 7: HIDDEN ADMIN SEATING DASHBOARD + LOGIN GUARD
+# ROUTE 7: DYNAMIC ADMIN COMPLEX PANEL (ALL EDITORS CONSOLIDATED)
 # ==========================================
 
 
 @app.route('/admin', methods=['GET', 'POST'])
 def admin_dashboard():
-    # 1. HANDLE LOGIN SUBMISSIONS
     if request.method == 'POST' and 'login_password' in request.form:
-        input_pass = request.form.get('login_password').strip()
-        if input_pass == ADMIN_PASSWORD:
+        if request.form.get('login_password').strip() == ADMIN_PASSWORD:
             session['admin_logged_in'] = True
-            print("🔑 [ADMIN LOG] Master access token verified successfully!")
             return redirect(url_for('admin_dashboard'))
         else:
-            print(
-                "🛑 [SECURITY CRITICAL] Failed login attempt with incorrect password!")
             return render_template_string(admin_login_template(), error="Incorrect password! Try again.")
 
-    # 2. ENFORCE LOGIN WALL: If session cookie is missing, show login page instead
     if not session.get('admin_logged_in'):
         return render_template_string(admin_login_template())
 
-    # 3. LIVE SLOT CONFIGURATION SUBMISSIONS
-    if request.method == 'POST' and 'update_movie_id' in request.form:
-        m_id = request.form.get("update_movie_id")
-        if m_id in MOVIES:
-            MOVIES[m_id]["movie_title"] = request.form.get(
-                "movie_title").strip()
-            MOVIES[m_id]["show_time_str"] = request.form.get(
-                "show_time_str").strip()
-            MOVIES[m_id]["theatre"] = request.form.get("theatre").strip()
-            MOVIES[m_id]["rows_str"] = request.form.get(
-                "rows_str").strip().upper()
-            MOVIES[m_id]["seats_per_row"] = int(
-                request.form.get("seats_per_row"))
-            MOVIES[m_id]["ticket_price"] = int(
-                request.form.get("ticket_price"))
-            print(f"✨ [ADMIN CONFIG] Updated settings for {m_id} instantly!")
-            return redirect(url_for('admin_dashboard'))
+    if request.method == 'POST':
+        action_type = request.form.get("action_type")
 
-    # 4. RENDERING UNLOCKED DASHBOARD WORKSPACE GRAPHICS
+        if action_type == "update_movie":
+            mid = request.form.get("update_movie_id")
+            if mid in MOVIES:
+                MOVIES[mid].update({
+                    "movie_title": request.form.get("movie_title").strip(), "show_time_str": request.form.get("show_time_str").strip(),
+                    "theatre": request.form.get("theatre").strip(), "rows_str": request.form.get("rows_str").strip().upper(),
+                    "seats_per_row": int(request.form.get("seats_per_row")), "ticket_price": int(request.form.get("ticket_price"))
+                })
+
+        elif action_type == "update_snack":
+            sid = request.form.get("update_snack_id")
+            if sid in CONCESSIONS:
+                CONCESSIONS[sid]["item_name"] = request.form.get(
+                    "item_name").strip()
+                CONCESSIONS[sid]["item_price"] = int(
+                    request.form.get("item_price"))
+
+        elif action_type == "add_promo":
+            code = request.form.get("new_code").strip().upper()
+            if code:
+                PROMOS[code] = {"discount_type": request.form.get(
+                    "discount_type"), "value": int(request.form.get("value"))}
+
+        elif action_type == "delete_promo":
+            code_to_del = request.form.get("del_code")
+            PROMOS.pop(code_to_del, None)
+
+        return redirect(url_for('admin_dashboard'))
+
     html_template = """
     <!DOCTYPE html>
     <html>
     <head>
-        <title>Admin Registry & Config Control</title>
+        <title>Master Operations Center</title>
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <style>
             body { font-family: Arial, sans-serif; background-color: #141414; color: white; padding: 40px 15px; margin: 0; }
-            .wrapper { max-width: 1100px; margin: 0 auto; }
-            h2, h3 { color: white; border-bottom: 2px solid #333; padding-bottom: 8px; }
-            .config-section { display: flex; flex-wrap: wrap; gap: 15px; margin-bottom: 40px; justify-content: space-between; }
-            .config-form { background: #1F1F1F; border-radius: 6px; padding: 15px; width: 31%; box-sizing: border-box; border-top: 3px solid #25D366; }
+            .wrapper { max-width: 1200px; margin: 0 auto; }
+            h2, h3 { border-bottom: 2px solid #333; padding-bottom: 6px; margin-top: 40px; }
+            .flex-section { display: flex; flex-wrap: wrap; gap: 15px; }
+            .card-form { background: #1F1F1F; border-radius: 6px; padding: 15px; width: 31%; box-sizing: border-box; border-top: 3px solid #25D366; margin-bottom:15px; }
+            .card-form-snack { background: #1F1F1F; border-radius: 6px; padding: 15px; width: 23%; box-sizing: border-box; border-top: 3px solid #FFD700; margin-bottom:15px; }
             label { font-size: 11px; font-weight: bold; color: #888; display: block; margin-top: 8px; }
-            input { width: 100%; padding: 6px; margin-top: 2px; background: #333; color: white; border: 1px solid #444; border-radius: 4px; box-sizing: border-box; }
+            input, select { width: 100%; padding: 6px; margin-top: 2px; background: #333; color: white; border: 1px solid #444; border-radius: 4px; box-sizing: border-box; }
             .btn-save { width: 100%; margin-top: 12px; padding: 8px; background: #25D366; color: black; font-weight: bold; border: none; border-radius: 4px; cursor: pointer; }
-            table { width: 100%; border-collapse: collapse; margin-top: 25px; background:#1F1F1F; box-shadow: 0 4px 10px rgba(0,0,0,0.4); }
-            th, td { padding: 14px; border: 1px solid #333; text-align: left; font-size:14px; }
+            table { width: 100%; border-collapse: collapse; margin-top: 20px; background:#1F1F1F; }
+            th, td { padding: 12px; border: 1px solid #333; text-align: left; font-size:13px; }
             th { background-color: #E50914; color: white; font-weight: bold; }
             .btn-wipe { display: inline-block; padding: 10px 20px; background-color: #FF4A4A; color: white; text-decoration: none; border-radius: 4px; font-weight: bold; font-size:13px; }
-            .btn-logout { display: inline-block; padding: 10px 20px; background-color: #444; color: white; text-decoration: none; border-radius: 4px; font-weight: bold; font-size:13px; float: right; }
+            .btn-logout { padding: 10px 20px; background-color: #444; color: white; text-decoration: none; border-radius: 4px; font-weight: bold; font-size:13px; float: right; }
         </style>
     </head>
     <body>
         <div class="wrapper">
             <a href="/admin/logout" class="btn-logout">&#128682; Secure Logout</a>
-            <h2>&#128274; Master Theater Settings Configuration</h2>
-            <p style="color:#aaa; margin-top:0;">Modify active slot parameters, naming fields, and layout row charts directly from your device.</p>
+            <h2 style="margin-top:0;">&#128274; Master Multiplex Operations Panel</h2>
             
-            <div class="config-section">
+            <h3>&#127196; Movie Slots Management</h3>
+            <div class="flex-section">
                 {% for mid, m in movies.items() %}
-                <form class="config-form" method="POST" action="{{ url_for('admin_dashboard') }}">
+                <form class="card-form" method="POST" action="{{ url_for('admin_dashboard') }}">
+                    <input type="hidden" name="action_type" value="update_movie">
                     <input type="hidden" name="update_movie_id" value="{{ mid }}">
-                    <strong style="color: #25D366;">Slot: {{ mid | upper }}</strong>
-                    
-                    <label>MOVIE TITLE:</label>
-                    <input type="text" name="movie_title" value="{{ m.movie_title }}" required>
-                    
-                    <label>SHOWTIME TEXT:</label>
-                    <!-- FIX: Allows entering absolute literal times like '07:30 PM' or '4:00 PM' directly -->
-                    <input type="text" name="show_time_str" value="{{ m.show_time_str }}" placeholder="e.g., 07:30 PM or Evening 8 PM" required>
-
-                    
-                    <label>AUDITORIUM / HALL:</label>
-                    <input type="text" name="theatre" value="{{ m.theatre }}" required>
-                    
-                    <label>GRID ROWS (Comma Separated):</label>
-                    <input type="text" name="rows_str" value="{{ m.rows_str }}" required>
-                    
-                    <label>SEATS PER ROW (Columns Count):</label>
-                    <input type="number" name="seats_per_row" value="{{ m.seats_per_row }}" required>
-                    
-                    <label>TICKET RATE (INR):</label>
-                    <input type="number" name="ticket_price" value="{{ m.ticket_price }}" required>
-                    
-                    <button type="submit" class="btn-save">&#128190; Update Slot</button>
+                    <strong style="color: #25D366;">Slot Block: {{ mid | upper }}</strong>
+                    <label>MOVIE TITLE:</label><input type="text" name="movie_title" value="{{ m.movie_title }}" required>
+                    <label>SHOWTIME TEXT:</label><input type="text" name="show_time_str" value="{{ m.show_time_str }}" required>
+                    <label>AUDITORIUM / HALL:</label><input type="text" name="theatre" value="{{ m.theatre }}" required>
+                    <label>GRID ROWS (A,B,C):</label><input type="text" name="rows_str" value="{{ m.rows_str }}" required>
+                    <label>COLUMNS COUNT:</label><input type="number" name="seats_per_row" value="{{ m.seats_per_row }}" required>
+                    <label>BASE PRICE (INR):</label><input type="number" name="ticket_price" value="{{ m.ticket_price }}" required>
+                    <button type="submit" class="btn-save">&#128190; Sync Movie</button>
                 </form>
                 {% endfor %}
             </div>
 
-            <h3>&#128196; Active Seating Registry & Logs</h3>
-            <div style="margin-top: 20px;">
+            <h3>&#127789; Food & Beverages Concessions Manager</h3>
+            <div class="flex-section">
+                {% for sid, snack in concessions.items() %}
+                <form class="card-form-snack" method="POST" action="{{ url_for('admin_dashboard') }}">
+                    <input type="hidden" name="action_type" value="update_snack">
+                    <input type="hidden" name="update_snack_id" value="{{ sid }}">
+                    <strong style="color: #FFD700;">Menu Ref: {{ sid | upper }}</strong>
+                    <label>ITEM NAME:</label><input type="text" name="item_name" value="{{ snack.item_name }}" required>
+                    <label>PRICE RATE (INR):</label><input type="number" name="item_price" value="{{ snack.item_price }}" required>
+                    <button type="submit" class="btn-save" style="background:#FFD700;">&#128190; Sync Snack</button>
+                </form>
+                {% endfor %}
+            </div>
+
+            <h3>&#127991; Coupon & Promotional Voucher Repository</h3>
+            <div class="flex-section" style="align-items: flex-start;">
+                <form class="card-form" method="POST" action="{{ url_for('admin_dashboard') }}" style="width:45%; border-top-color:#3498db;">
+                    <input type="hidden" name="action_type" value="add_promo">
+                    <strong style="color: #3498db;">&#10133; Generate New Promo Voucher</strong>
+                    <label>PROMO CODE KEYWORD:</label><input type="text" name="new_code" placeholder="e.g., WINTER50" required style="text-transform:uppercase;">
+                    <label>DISCOUNT MODE TYPE:</label>
+                    <select name="discount_type"><option value="percentage">Percentage (%% Off Total)</option><option value="flat">Flat (Fixed Cash Reduction)</option></select>
+                    <label>DEDUCTION METRIC VALUE:</label><input type="number" name="value" placeholder="e.g. 20 or 50" required>
+                    <button type="submit" class="btn-save" style="background:#3498db; color:white;">+ Deploy Coupon</button>
+                </form>
+                
+                <div style="width:50%; background:#1F1F1F; padding:15px; border-radius:6px; box-sizing:border-box; border-top: 3px solid #e74c3c;">
+                    <strong style="color: #e74c3c;">&#128195; Active Vouchers List</strong>
+                    <table style="width:100%; margin-top:10px;">
+                        <tr><th>Code</th><th>Reduction Rules Profile</th><th>Action</th></tr>
+                        {% for code, rule in promos.items() %}
+                        <tr>
+                            <td style="font-family:monospace; font-weight:bold; color:#3498db;">{{ code }}</td>
+                            <td>{{ rule.value }}% Off Entire Cart if percentage else -&#8377;{{ rule.value }} Flat</td>
+                            <td>
+                                <form method="POST" action="{{ url_for('admin_dashboard') }}" style="margin:0;">
+                                    <input type="hidden" name="action_type" value="delete_promo">
+                                    <input type="hidden" name="del_code" value="{{ code }}">
+                                    <button type="submit" style="background:#e74c3c; border:none; padding:4px 8px; color:white; border-radius:3px; cursor:pointer; font-size:11px;">Remove</button>
+                                </form>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </table>
+                </div>
+            </div>
+
+            <h3>&#128196; Live Ticketing Seating Registry Database Sheets</h3>
+            <div style="margin-top: 15px; margin-bottom:40px;">
                 <a href="{{ url_for('wipe_logs') }}" class="btn-wipe" onclick="return confirm('Wipe out all database log arrays entirely?');">&#128680; Wipe All Booking Data</a>
                 &nbsp;&nbsp;&nbsp;&nbsp;<a href="/" style="color:#aaa; text-decoration:none; font-size:14px;">&larr; Back to Client Homepage</a>
             </div>
             <table>
-                <tr>
-                    <th>Booking Reference ID</th>
-                    <th>Movie Segment</th>
-                    <th>Customer Name</th>
-                    <th>Allocated Seats Matrix</th>
-                    <th>Phone Log</th>
-                    <th>Timestamp Logs</th>
-                </tr>
+                <tr><th>Booking Reference ID</th><th>Movie Slot</th><th>Customer Name</th><th>Allocated Positions</th><th>Snacks Ordered</th><th>Phone Log</th><th>Timestamp</th></tr>
                 {% for bkid, t in logs.items() %}
                 <tr>
                     <td style="color:#25D366; font-family:monospace; font-weight:bold;">{{ bkid }}</td>
                     <td>{{ movies[t.movie_id]["movie_title"] if t.movie_id in movies else 'Unknown Show' }}</td>
                     <td>{{ t.name }}</td>
                     <td style="color:#E50914; font-weight:bold;">{{ t.seats }}</td>
+                    <td style="color:#25D366;">{{ t.get('snacks','None') }}</td>
                     <td>+{{ t.phone }}</td>
                     <td style="color:#888;">{{ t.timestamp }}</td>
                 </tr>
@@ -739,40 +720,26 @@ def admin_dashboard():
     </body>
     </html>
     """
-    return render_template_string(html_template, logs=MASTER_DB["active_bookings"], movies=MOVIES)
+    return render_template_string(html_template, logs=MASTER_DB["active_bookings"], movies=MOVIES, concessions=CONCESSIONS, promos=PROMOS)
 
 
-# HELPER COMPILER FUNCTION: Serves the dark password prompt interface page natively
 def admin_login_template():
     return """
     <!DOCTYPE html>
     <html>
-    <head>
-        <title>Admin Authentication</title>
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <style>
-            body { font-family: Arial, sans-serif; background-color: #141414; color: white; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
-            .login-card { background: #1F1F1F; width: 100%; max-width: 380px; padding: 30px; border-radius: 8px; border-top: 4px solid #E50914; box-shadow: 0 4px 15px rgba(0,0,0,0.6); text-align: center; box-sizing: border-box; }
-            input[type="password"] { width: 100%; padding: 12px; margin: 15px 0; border-radius: 4px; border: 1px solid #333; background: #333; color: white; box-sizing: border-box; font-size: 16px; text-align: center; }
-            button { width: 100%; padding: 12px; background: #E50914; border: none; color: white; font-weight: bold; border-radius: 4px; cursor: pointer; font-size: 16px; }
-            .error-msg { color: #FF4A4A; font-size: 13px; font-weight: bold; margin-bottom: 10px; }
-        </style>
+    <head><title>Admin Authentication</title><meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        body { font-family: Arial, sans-serif; background-color: #141414; color: white; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
+        .login-card { background: #1F1F1F; width: 100%; max-width: 380px; padding: 30px; border-radius: 8px; border-top: 4px solid #E50914; text-align: center; box-sizing: border-box; }
+        input[type="password"] { width: 100%; padding: 12px; margin: 15px 0; border-radius: 4px; border: 1px solid #333; background: #333; color: white; box-sizing: border-box; text-align: center; font-size:16px; }
+        button { width: 100%; padding: 12px; background: #E50914; border: none; color: white; font-weight: bold; border-radius: 4px; cursor: pointer; }
+    </style>
     </head>
     <body>
         <div class="login-card">
-            <h2 style="margin-top:0;">&#128274; Admin Gateway</h2>
-            <p style="color:#aaa; font-size:13px;">Please enter your master configuration password to unlock controls.</p>
-            
-            {% if error %}
-                <div class="error-msg">{{ error }}</div>
-            {% endif %}
-            
-            <form method="POST">
-                <input type="password" name="login_password" placeholder="••••••••" required autocomplete="off" autofocus>
-                <button type="submit">Unlock Dashboard</button>
-            </form>
-            <br>
-            <a href="/" style="color:#666; text-decoration:none; font-size:13px;">&larr; Back to Client Site</a>
+            <h2>&#128274; Admin Gateway</h2>
+            {% if error %}<p style="color:#FF4A4A; font-size:13px;">{{ error }}</p>{% endif %}
+            <form method="POST"><input type="password" name="login_password" placeholder="••••••••" required autocomplete="off" autofocus><button type="submit">Unlock Dashboard</button></form>
         </div>
     </body>
     </html>
@@ -782,7 +749,6 @@ def admin_login_template():
 @app.route('/admin/logout')
 def admin_logout():
     session.pop('admin_logged_in', None)
-    print("🔒 [ADMIN LOG] Closed administrator session securely.")
     return redirect(url_for('home'))
 
 
@@ -790,21 +756,18 @@ def admin_logout():
 def wipe_logs():
     if not session.get('admin_logged_in'):
         return "Unauthorized Action", 403
-
     MASTER_DB["active_bookings"].clear()
     MASTER_DB["seats_cache"] = {"m1": [], "m2": [], "m3": []}
-
     with open("booking_data.py", "w", encoding="utf-8") as file:
         file.write(
             "# This file stores your complete booking details permanently\n")
         file.write(f"SAVED_BOOKINGS = {{}}\n")
         file.write(f"SAVED_MOVIES = {repr(MOVIES)}\n")
-        return redirect(url_for('admin_dashboard'))
+        file.write(f"SAVED_CONCESSIONS = {repr(CONCESSIONS)}\n")
+        file.write(f"SAVED_PROMOS = {repr(PROMOS)}\n")
+    return redirect(url_for('admin_dashboard'))
 
 
-# ==========================================
-# LAUNCH GATEWAYS
-# ==========================================
 if __name__ == '__main__':
     import socket
     try:
@@ -814,11 +777,6 @@ if __name__ == '__main__':
         s.close()
     except Exception:
         local_ip = "127.0.0.1"
-
-    print("\n" + "="*50)
-    print(f"MULTI-MOVIE SYSTEM ACTIVE ON LOCAL WI-FI PORTAL!")
-    print(f"Client Homepage Link: http://{local_ip}:5000")
-    print(f"Secret Admin Control Dashboard: http://{local_ip}:5000/admin")
-    print("="*50 + "\n")
-
+    print("\n" + "="*50 +
+          f"\nClient Link: http://{local_ip}:5000\n" + "="*50 + "\n")
     app.run(host='0.0.0.0', debug=True, use_reloader=False, port=5000)
