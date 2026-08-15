@@ -4,7 +4,8 @@ import time
 import atexit
 import os
 from datetime import datetime, timedelta
-from flask import Flask, render_template_string, request, send_file, redirect, url_for
+from flask import Flask, render_template_string, request, send_file, redirect, url_for, session
+
 
 # Safely import the separate permanent data storage file
 import booking_data
@@ -20,7 +21,19 @@ app.secret_key = "cinema_vault_session_protection_string"
 # DEVICE GATEKEEPER MONITOR CONFIGURATION
 # ==========================================
 # Make sure your phone user-agent signature goes right between these quotes:
-MY_PHONE_SIGNATURE = "Mozilla/5.0"
+MY_PHONE_SIGNATURE = "Android 10; K"
+# ==========================================
+# MASTER SECRET SECURITY PASSPHRASE
+# ==========================================
+# Change this word to any private password you want!
+ADMIN_PASSWORD = "lazy_panda_66_admin"
+
+# ==========================================
+# MASTER CRYPTO GATEKEEPER PASSKEY
+# ==========================================
+# Change this word to any secret passcode you want!
+ADMIN_SECRET_TOKEN = "lazy_panda_66_admin"
+
 
 # ==========================================
 # MULTI-MOVIE SCHEDULING MASTER DATABASE
@@ -453,6 +466,7 @@ def download_ticket_route():
     draw.text((40, 240), "SEATS ALLOCATED", fill="#888888", font=font_label)
     draw.text((40, 260), seats_param, fill="#E50914", font=font_body)
 
+    # REMOVED KEY: The validation URL points to a clean route path with no ?key parameters attached
     validation_url = f"{request.url_root}verify/{bkid_param}"
     qr = qrcode.QRCode(
         version=1, error_correction=qrcode.constants.ERROR_CORRECT_M, box_size=6, border=2)
@@ -470,39 +484,41 @@ def download_ticket_route():
         return send_file(img_io, mimetype='image/jpeg', as_attachment=True, download_name='movie_ticket.jpg')
     return send_file(img_io, mimetype='image/jpeg')
 
-# ==========================================
-# ROUTE 6: SECURE GATEKEEPER TICKET SCAN CHECKER (ONE-TIME SCAN LOCK)
-# ==========================================
 
-
-@app.route('/verify/<booking_id>')
+# ==========================================
+# ROUTE 6: SECURE GATEKEEPER TICKET SCAN CHECKER (PASSWORD PROTECTED SESSION)
+# ==========================================
+@app.route('/verify/<booking_id>', methods=['GET', 'POST'])
 def verify_ticket_route(booking_id):
-    scanned_device_user_agent = request.headers.get('User-Agent', '').lower()
 
-    # Strict hardware device signature fingerprint checker framework
-    if MY_PHONE_SIGNATURE.lower() not in scanned_device_user_agent:
-        print(
-            f"Blocked scan attempt from unauthorized device: {scanned_device_user_agent}")
-        return """
-        <body style="background:#141414; color:#FF4A4A; font-family:Arial, sans-serif; text-align:center; padding-top:100px;">
-            <div style="background:#1F1F1F; max-width:400px; margin:0 auto; padding:30px; border-radius:8px; border-top:5px solid #FF4A4A; box-shadow: 0 4px 10px rgba(0,0,0,0.5);">
-                <h2>&#128274; ACCESS DENIED</h2>
-                <p style="color:#aaa; font-size:14px; line-height:1.5;">This scanner device does not possess authorized admin credentials framework.</p>
-            </div>
-        </body>
-        """, 403
+    # 1. HANDLE PASSCODE SUBMISSIONS AT THE SCAN GATEWAY WALL
+    if request.method == 'POST' and 'login_password' in request.form:
+        input_pass = request.form.get('login_password').strip()
+        if input_pass == ADMIN_PASSWORD:
+            session['admin_logged_in'] = True
+            print(
+                "🔑 [SCANNER LOG] Guard password verified via QR code link! Session opened.")
+            return redirect(url_for('verify_ticket_route', booking_id=booking_id))
+        else:
+            print(
+                "🛑 [SCANNER ALERT] Unauthorized person tried entering an incorrect password on a QR link!")
+            return render_template_string(admin_login_template(), error="Incorrect password! Try again.")
 
+    # 2. ENFORCE SYSTEM LOGIN WALL: If your phone hasn't logged in yet, force the password screen!
+    if not session.get('admin_logged_in'):
+        return render_template_string(admin_login_template())
+
+    # 3. IF LOGGED IN, PROCEED WITH THE SECURE ONE-TIME ENTRY SCANNER CHECK
     active_records = MASTER_DB["active_bookings"]
     if booking_id in active_records:
         t = active_records[booking_id]
         m_title = MOVIES.get(t.get("movie_id", "m1"), {}).get(
             "movie_title", "Unknown Show")
 
-        # Grab the ticket's current scanning state (defaults to 'Active' if newly booked)
         ticket_status = t.get("status", "Active")
         checkin_time = t.get("checked_in_at", "")
 
-        # 🛑 FRAUD WARNING GATE: If the status is already 'Checked In', block entry immediately!
+        # 🛑 ONE-TIME SCAN FRAUD LOCK: Blocks duplicates even if you are logged in as admin
         if ticket_status == "Checked In":
             denied_template = """
             <body style="background:#141414; color:white; font-family:Arial, sans-serif; text-align:center; padding-top:40px;">
@@ -514,12 +530,14 @@ def verify_ticket_route(booking_id):
                     <p style="margin:15px 0 0 0; font-size:12px; color:#FF4A4A; border-top:1px solid #333; padding-top:10px; font-weight:bold;">
                         &#128680; Used Entry Pass Scanned at: {{ checkin_time }}
                     </p>
+                    <br>
+                    <a href="/" style="color:#666; text-decoration:none; font-size:13px;">&larr; Back to Cinema Home</a>
                 </div>
             </body>
             """
             return render_template_string(denied_template, t=t)
 
-        #  VALID FIRST-TIME ENTRY HANDSHAKE: Flip status tokens inside database mapping profiles
+        # VALID FIRST-TIME ENTRY HANDSHAKE: Logs current checking window time
         current_scan_time = datetime.now().strftime("%I:%M:%S %p")
         t["status"] = "Checked In"
         t["checked_in_at"] = current_scan_time
@@ -535,6 +553,8 @@ def verify_ticket_route(booking_id):
                 <p style="margin:15px 0 0 0; font-size:12px; color:#25D366; border-top:1px solid #333; padding-top:10px; font-weight:bold;">
                     &#9989; Check-in Log Locked at: {{ current_scan_time }}
                 </p>
+                <br>
+                <a href="/" style="color:#666; text-decoration:none; font-size:13px;">&larr; Back to Cinema Home</a>
             </div>
         </body>
         """
@@ -545,32 +565,37 @@ def verify_ticket_route(booking_id):
         <div style="background:#1F1F1F; max-width:400px; margin:0 auto; padding:30px; border-radius:8px; border-top:5px solid #E50914; box-shadow: 0 4px 10px rgba(0,0,0,0.5);">
             <h2>&nbsp; ACCESS DENIED</h2>
             <p style="color:#aaa; font-size:14px;">The scanned log reference code was not registered in our database catalog files.</p>
+            <br>
+            <a href="/" style="color:#666; text-decoration:none; font-size:13px;">&larr; Back to Cinema Home</a>
         </div>
     </body>
     """, 404
 
 # ==========================================
-# ROUTE 7: HIDDEN ADMIN SEATING DASHBOARD + LIVE CONFIG EDITOR
+# ROUTE 7: HIDDEN ADMIN SEATING DASHBOARD + LOGIN GUARD
 # ==========================================
 
 
 @app.route('/admin', methods=['GET', 'POST'])
 def admin_dashboard():
-    scanned_device_user_agent = request.headers.get('User-Agent', '').lower()
+    # 1. HANDLE LOGIN SUBMISSIONS
+    if request.method == 'POST' and 'login_password' in request.form:
+        input_pass = request.form.get('login_password').strip()
+        if input_pass == ADMIN_PASSWORD:
+            session['admin_logged_in'] = True
+            print("🔑 [ADMIN LOG] Master access token verified successfully!")
+            return redirect(url_for('admin_dashboard'))
+        else:
+            print(
+                "🛑 [SECURITY CRITICAL] Failed login attempt with incorrect password!")
+            return render_template_string(admin_login_template(), error="Incorrect password! Try again.")
 
-    if MY_PHONE_SIGNATURE.lower() not in scanned_device_user_agent:
-        print(
-            f"Blocked unauthorized dashboard access attempt from: {scanned_device_user_agent}")
-        return """
-        <body style="background:#141414; color:#FF4A4A; font-family:Arial, sans-serif; text-align:center; padding-top:100px;">
-            <div style="background:#1F1F1F; max-width:400px; margin:0 auto; padding:35px; border-radius:8px; border-top:5px solid #FF4A4A; box-shadow: 0 4px 10px rgba(0,0,0,0.5);">
-                <h2>&#128274; ACCESS DENIED</h2>
-                <p style="color:#aaa; font-size:14px; line-height:1.6;">Your device signature does not match administrator credentials.</p>
-            </div>
-        </body>
-        """, 403
+    # 2. ENFORCE LOGIN WALL: If session cookie is missing, show login page instead
+    if not session.get('admin_logged_in'):
+        return render_template_string(admin_login_template())
 
-    if request.method == 'POST':
+    # 3. LIVE SLOT CONFIGURATION SUBMISSIONS
+    if request.method == 'POST' and 'update_movie_id' in request.form:
         m_id = request.form.get("update_movie_id")
         if m_id in MOVIES:
             MOVIES[m_id]["movie_title"] = request.form.get(
@@ -587,6 +612,7 @@ def admin_dashboard():
             print(f"✨ [ADMIN CONFIG] Updated settings for {m_id} instantly!")
             return redirect(url_for('admin_dashboard'))
 
+    # 4. RENDERING UNLOCKED DASHBOARD WORKSPACE GRAPHICS
     html_template = """
     <!DOCTYPE html>
     <html>
@@ -606,16 +632,18 @@ def admin_dashboard():
             th, td { padding: 14px; border: 1px solid #333; text-align: left; font-size:14px; }
             th { background-color: #E50914; color: white; font-weight: bold; }
             .btn-wipe { display: inline-block; padding: 10px 20px; background-color: #FF4A4A; color: white; text-decoration: none; border-radius: 4px; font-weight: bold; font-size:13px; }
+            .btn-logout { display: inline-block; padding: 10px 20px; background-color: #444; color: white; text-decoration: none; border-radius: 4px; font-weight: bold; font-size:13px; float: right; }
         </style>
     </head>
     <body>
         <div class="wrapper">
+            <a href="/admin/logout" class="btn-logout">&#128682; Secure Logout</a>
             <h2>&#128274; Master Theater Settings Configuration</h2>
             <p style="color:#aaa; margin-top:0;">Modify active slot parameters, naming fields, and layout row charts directly from your device.</p>
             
             <div class="config-section">
                 {% for mid, m in movies.items() %}
-                <form class="config-form" method="POST">
+                <form class="config-form" method="POST" action="{{ url_for('admin_dashboard') }}">
                     <input type="hidden" name="update_movie_id" value="{{ mid }}">
                     <strong style="color: #25D366;">Slot: {{ mid | upper }}</strong>
                     
@@ -644,7 +672,7 @@ def admin_dashboard():
 
             <h3>&#128196; Active Seating Registry & Logs</h3>
             <div style="margin-top: 20px;">
-                <a href="/admin/wipe-logs" class="btn-wipe" onclick="return confirm('Wipe out all database log arrays entirely?');">&#128680; Wipe All Booking Data</a>
+                <a href="{{ url_for('wipe_logs') }}" class="btn-wipe" onclick="return confirm('Wipe out all database log arrays entirely?');">&#128680; Wipe All Booking Data</a>
                 &nbsp;&nbsp;&nbsp;&nbsp;<a href="/" style="color:#aaa; text-decoration:none; font-size:14px;">&larr; Back to Client Homepage</a>
             </div>
             <table>
@@ -674,20 +702,64 @@ def admin_dashboard():
     return render_template_string(html_template, logs=MASTER_DB["active_bookings"], movies=MOVIES)
 
 
+# HELPER COMPILER FUNCTION: Serves the dark password prompt interface page natively
+def admin_login_template():
+    return """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Admin Authentication</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <style>
+            body { font-family: Arial, sans-serif; background-color: #141414; color: white; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
+            .login-card { background: #1F1F1F; width: 100%; max-width: 380px; padding: 30px; border-radius: 8px; border-top: 4px solid #E50914; box-shadow: 0 4px 15px rgba(0,0,0,0.6); text-align: center; box-sizing: border-box; }
+            input[type="password"] { width: 100%; padding: 12px; margin: 15px 0; border-radius: 4px; border: 1px solid #333; background: #333; color: white; box-sizing: border-box; font-size: 16px; text-align: center; }
+            button { width: 100%; padding: 12px; background: #E50914; border: none; color: white; font-weight: bold; border-radius: 4px; cursor: pointer; font-size: 16px; }
+            .error-msg { color: #FF4A4A; font-size: 13px; font-weight: bold; margin-bottom: 10px; }
+        </style>
+    </head>
+    <body>
+        <div class="login-card">
+            <h2 style="margin-top:0;">&#128274; Admin Gateway</h2>
+            <p style="color:#aaa; font-size:13px;">Please enter your master configuration password to unlock controls.</p>
+            
+            {% if error %}
+                <div class="error-msg">{{ error }}</div>
+            {% endif %}
+            
+            <form method="POST">
+                <input type="password" name="login_password" placeholder="••••••••" required autocomplete="off" autofocus>
+                <button type="submit">Unlock Dashboard</button>
+            </form>
+            <br>
+            <a href="/" style="color:#666; text-decoration:none; font-size:13px;">&larr; Back to Client Site</a>
+        </div>
+    </body>
+    </html>
+    """
+
+
+@app.route('/admin/logout')
+def admin_logout():
+    session.pop('admin_logged_in', None)
+    print("🔒 [ADMIN LOG] Closed administrator session securely.")
+    return redirect(url_for('home'))
+
+
 @app.route('/admin/wipe-logs')
 def wipe_logs():
-    scanned_device_user_agent = request.headers.get('User-Agent', '').lower()
-    if MY_PHONE_SIGNATURE.lower() not in scanned_device_user_agent:
-        return "Unauthorized", 403
+    if not session.get('admin_logged_in'):
+        return "Unauthorized Action", 403
 
     MASTER_DB["active_bookings"].clear()
     MASTER_DB["seats_cache"] = {"m1": [], "m2": [], "m3": []}
+
     with open("booking_data.py", "w", encoding="utf-8") as file:
         file.write(
             "# This file stores your complete booking details permanently\n")
         file.write(f"SAVED_BOOKINGS = {{}}\n")
         file.write(f"SAVED_MOVIES = {repr(MOVIES)}\n")
-    return redirect(url_for('admin_dashboard'))
+        return redirect(url_for('admin_dashboard'))
 
 
 # ==========================================
