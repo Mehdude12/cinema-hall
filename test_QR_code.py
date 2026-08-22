@@ -16,6 +16,12 @@ if not hasattr(booking_data, 'SAVED_CONCESSIONS'):
     booking_data.SAVED_CONCESSIONS = {}
 if not hasattr(booking_data, 'SAVED_PROMOS'):
     booking_data.SAVED_PROMOS = {}
+# Add this initialization line right where the other SAVED configurations load
+if not hasattr(booking_data, 'SAVED_REVIEWS'):
+    booking_data.SAVED_REVIEWS = []
+
+REVIEWS = booking_data.SAVED_REVIEWS if booking_data.SAVED_REVIEWS else []
+
 
 app = Flask(__name__)
 app.secret_key = "cinema_vault_session_protection_string"
@@ -50,11 +56,18 @@ DEFAULT_PROMOS = {
 MOVIES = booking_data.SAVED_MOVIES if booking_data.SAVED_MOVIES else DEFAULT_MOVIES
 CONCESSIONS = booking_data.SAVED_CONCESSIONS if booking_data.SAVED_CONCESSIONS else DEFAULT_CONCESSIONS
 PROMOS = booking_data.SAVED_PROMOS if booking_data.SAVED_PROMOS else DEFAULT_PROMOS
-
+# ==========================================
+# MASTER PROGRAM CONFIGURATIONS & DATABASE (FIXED FOR ALERTS)
+# ==========================================
 MASTER_DB = {
     "active_bookings": booking_data.SAVED_BOOKINGS,
-    "seats_cache": {"m1": [], "m2": [], "m3": []}
+    "seats_cache": {"m1": [], "m2": [], "m3": []},
+    "assistance_queue": [],
+    "live_chats_database": {},
+    # 🟢 FIXED: Add this line to prevent the admin dashboard KeyError crash!
+    "live_assistance_alerts": {}
 }
+
 
 for bkid, details in MASTER_DB["active_bookings"].items():
     m_id = details.get("movie_id", "m1")
@@ -76,6 +89,8 @@ def save_data_on_shutdown():
         file.write(f"SAVED_MOVIES = {repr(MOVIES)}\n")
         file.write(f"SAVED_CONCESSIONS = {repr(CONCESSIONS)}\n")
         file.write(f"SAVED_PROMOS = {repr(PROMOS)}\n")
+        # ADD THIS LINE INSIDE THE SHUTDOWN WRITER:
+        file.write(f"SAVED_REVIEWS = {repr(REVIEWS)}\n")
 
 
 atexit.register(save_data_on_shutdown)
@@ -89,13 +104,15 @@ def get_total_seats(movie_dict_item):
     return len(get_rows_list(movie_dict_item)) * int(movie_dict_item.get("seats_per_row", 10))
 
 # ==========================================
-# ROUTE 1: HOMEPAGE (MOVIE GRID LISTING)
+# ROUTE 1: HOMEPAGE (MOVIE GRID LISTING WITH AI SUPPORT BUTTON)
 # ==========================================
 
 
 @app.route('/')
 def home():
-    current_time = datetime.now()
+    print(
+        f"\n📱 [DEVICE TRACKER] Current phone signature is:\n{request.headers.get('User-Agent')}\n")
+
     html_template = """
     <!DOCTYPE html>
     <html>
@@ -115,10 +132,12 @@ def home():
         <div class="container">
             <h1 style="font-size: 28px; margin-bottom: 5px;">&#127887; Cinema Ticket Vault</h1>
             <p style="color:#aaa; margin-top:0;">Select a showtime to proceed with seat selections</p>
+            
             <div class="movie-grid">
                 {% for mid, m in movies.items() %}
                 {% set total_seats = calc_total(m) %}
                 {% set remaining = total_seats - cache[mid]|length %}
+                
                 <div class="movie-card">
                     <div>
                         <h3 style="margin:0 0 10px 0; min-height:50px;">{{ m.movie_title }}</h3>
@@ -127,6 +146,7 @@ def home():
                         <p style="color:#25D366; font-size:13px; font-weight:bold; margin:5px 0;">&#128176; Base Rate: &#8377;{{ m.ticket_price }}</p>
                         <p style="font-size:13px; margin:5px 0;">&#127919; Seats Available: <strong>{{ remaining }}</strong> / {{ total_seats }}</p>
                     </div>
+                    
                     {% if remaining <= 0 %}
                         <div class="btn disabled" style="background:#333;">Sold Out</div>
                     {% else %}
@@ -136,12 +156,27 @@ def home():
                 {% endfor %}
             </div>
             <br><br>
+            
+            <!-- 🤖 ADDED FRONTEND LINK LINK: This renders the AI Concierge shortcut directly on the main site -->
+            <a href="/support" style="display:inline-block; padding:12px 24px; background:#262626; color:#25D366; border:1px solid #25D366; border-radius:4px; text-decoration:none; font-weight:bold; font-size:13px; transition: 0.2s;">
+                🤖 Open Customer Support AI
+            </a>
+
+            <br><br>
+            <!-- Add this link directly beside your Open AI link button box -->
+            <a href="/reviews" style="display:inline-block; padding:12px 24px; background:#262626; color:#FFD700; border:1px solid #FFD700; border-radius:4px; text-decoration:none; font-weight:bold; font-size:13px; transition: 0.2s; margin-left:10px;">
+                ⭐ Audience Reviews Board
+            </a>
+
+            
+            <br><br>
             <a href="/admin" style="color: #666; text-decoration: none; font-size: 13px;">&#128274; Access Admin Dashboard</a>
         </div>
     </body>
     </html>
     """
     return render_template_string(html_template, movies=MOVIES, cache=MASTER_DB["seats_cache"], calc_total=get_total_seats)
+
 # ==========================================
 # ROUTE 2: VISUAL SEAT SELECTION & CONCESSIONS CART
 # ==========================================
@@ -555,13 +590,15 @@ def verify_ticket_route(booking_id):
         """
         return render_template_string(approved_template, t=t, title=m_title, current_scan_time=current_scan_time)
     return "Ticket Not Found", 404
+
 # ==========================================
-# ROUTE 7: DYNAMIC ADMIN COMPLEX PANEL (ALL EDITORS CONSOLIDATED)
+# ROUTE 7: DYNAMIC ADMIN PANEL (ALL EDITORS CONSOLIDATED)
 # ==========================================
 
 
 @app.route('/admin', methods=['GET', 'POST'])
 def admin_dashboard():
+    # 1. ENFORCE SECURITY LOGIN PROMPT PASSWORD GATE
     if request.method == 'POST' and 'login_password' in request.form:
         if request.form.get('login_password').strip() == ADMIN_PASSWORD:
             session['admin_logged_in'] = True
@@ -572,6 +609,7 @@ def admin_dashboard():
     if not session.get('admin_logged_in'):
         return render_template_string(admin_login_template())
 
+    # 2. DETECT AND EXECUTE ACTIVE POST SUBMISSIONS FROM WORKSPACE FORMS
     if request.method == 'POST':
         action_type = request.form.get("action_type")
 
@@ -579,9 +617,12 @@ def admin_dashboard():
             mid = request.form.get("update_movie_id")
             if mid in MOVIES:
                 MOVIES[mid].update({
-                    "movie_title": request.form.get("movie_title").strip(), "show_time_str": request.form.get("show_time_str").strip(),
-                    "theatre": request.form.get("theatre").strip(), "rows_str": request.form.get("rows_str").strip().upper(),
-                    "seats_per_row": int(request.form.get("seats_per_row")), "ticket_price": int(request.form.get("ticket_price"))
+                    "movie_title": request.form.get("movie_title").strip(),
+                    "show_time_str": request.form.get("show_time_str").strip(),
+                    "theatre": request.form.get("theatre").strip(),
+                    "rows_str": request.form.get("rows_str").strip().upper(),
+                    "seats_per_row": int(request.form.get("seats_per_row")),
+                    "ticket_price": int(request.form.get("ticket_price"))
                 })
 
         elif action_type == "update_snack":
@@ -604,6 +645,7 @@ def admin_dashboard():
 
         return redirect(url_for('admin_dashboard'))
 
+    # 3. DEFINE THE MASTER DESIGN TEMPLATE SAFELY (OUTSIDE ALL SUB-CONDITIONS) [1.1]
     html_template = """
     <!DOCTYPE html>
     <html>
@@ -620,7 +662,7 @@ def admin_dashboard():
             label { font-size: 11px; font-weight: bold; color: #888; display: block; margin-top: 8px; }
             input, select { width: 100%; padding: 6px; margin-top: 2px; background: #333; color: white; border: 1px solid #444; border-radius: 4px; box-sizing: border-box; }
             .btn-save { width: 100%; margin-top: 12px; padding: 8px; background: #25D366; color: black; font-weight: bold; border: none; border-radius: 4px; cursor: pointer; }
-            table { width: 100%; border-collapse: collapse; margin-top: 20px; background:#1F1F1F; }
+            table { width: 100%; border-collapse: collapse; margin-top: 20px; background:#1F1F1F; margin-bottom: 40px; }
             th, td { padding: 12px; border: 1px solid #333; text-align: left; font-size:13px; }
             th { background-color: #E50914; color: white; font-weight: bold; }
             .btn-wipe { display: inline-block; padding: 10px 20px; background-color: #FF4A4A; color: white; text-decoration: none; border-radius: 4px; font-weight: bold; font-size:13px; }
@@ -632,7 +674,7 @@ def admin_dashboard():
             <a href="/admin/logout" class="btn-logout">&#128682; Secure Logout</a>
             <h2 style="margin-top:0;">&#128274; Master Multiplex Operations Panel</h2>
             
-            <h3>&#127196; Movie Slots Management</h3>
+            <h3>&#127916; Movie Slots Management</h3>
             <div class="flex-section">
                 {% for mid, m in movies.items() %}
                 <form class="card-form" method="POST" action="{{ url_for('admin_dashboard') }}">
@@ -698,7 +740,7 @@ def admin_dashboard():
             </div>
 
             <h3>&#128196; Live Ticketing Seating Registry Database Sheets</h3>
-            <div style="margin-top: 15px; margin-bottom:40px;">
+                        <div style="margin-top: 15px; margin-bottom:40px;">
                 <a href="{{ url_for('wipe_logs') }}" class="btn-wipe" onclick="return confirm('Wipe out all database log arrays entirely?');">&#128680; Wipe All Booking Data</a>
                 &nbsp;&nbsp;&nbsp;&nbsp;<a href="/" style="color:#aaa; text-decoration:none; font-size:14px;">&larr; Back to Client Homepage</a>
             </div>
@@ -716,11 +758,35 @@ def admin_dashboard():
                 </tr>
                 {% endfor %}
             </table>
+
+            <h3>🗑️ Audience Feedback & Review Moderation</h3>
+            <table>
+                <tr><th>User Name</th><th>Movie Title</th><th>Rating Score</th><th>Written Comment</th><th>Timestamp</th><th>Management Action</th></tr>
+                {% if reviews_list %}
+                    {% for r in reviews_list %}
+                    <tr>
+                        <td><b>{{ r.name }}</b></td>
+                        <td style="color:#aaa;">{{ r.movie }}</td>
+                        <td style="color:#FFD700;">{{ r.stars }}</td>
+                        <td>"{{ r.text }}"</td>
+                        <td style="color:#888;">{{ r.date }}</td>
+                        <td>
+                            <a href="/admin/delete-review/{{ r.id }}" style="background:#e74c3c; color:white; padding:4px 8px; text-decoration:none; border-radius:3px; font-size:11px; font-weight:bold;" onclick="return confirm('Permanently drop this feedback post?');">Delete</a>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                {% else %}
+                    <tr><td colspan="6" style="text-align:center; color:#666;">No audience reviews logged inside active memory charts.</td></tr>
+                {% endif %}
+            </table>
         </div>
     </body>
     </html>
     """
-    return render_template_string(html_template, logs=MASTER_DB["active_bookings"], movies=MOVIES, concessions=CONCESSIONS, promos=PROMOS)
+
+    # 4. EXPLICITLY RETURN THE CONSOLIDATED INTERFACE DATA AT THE ABSOLUTE BOTTOM [1.1]
+    # FIXED: Changed 'reviews_list=reviews_list' to 'reviews_list=REVIEWS' to match your global database tracking memory bank variable name [1.1]
+    return render_template_string(html_template, logs=MASTER_DB["active_bookings"], movies=MOVIES, concessions=CONCESSIONS, promos=PROMOS, alerts=MASTER_DB["live_assistance_alerts"], reviews_list=REVIEWS)
 
 
 def admin_login_template():
@@ -746,6 +812,19 @@ def admin_login_template():
     """
 
 
+@app.route('/admin/delete-review/<int:review_id>')
+def delete_review_route(review_id):
+    global REVIEWS
+    if not session.get('admin_logged_in'):
+        return "Unauthorized", 403
+    REVIEWS = [r for r in REVIEWS if r["id"] != review_id]
+    # Update permanent file pointer array instantly
+    booking_data.SAVED_REVIEWS = REVIEWS
+    print(
+        f"🗑️ [ADMIN MODERATION] Deleted review reference identifier: {review_id}")
+    return redirect(url_for('admin_dashboard'))
+
+
 @app.route('/admin/logout')
 def admin_logout():
     session.pop('admin_logged_in', None)
@@ -766,6 +845,461 @@ def wipe_logs():
         file.write(f"SAVED_CONCESSIONS = {repr(CONCESSIONS)}\n")
         file.write(f"SAVED_PROMOS = {repr(PROMOS)}\n")
     return redirect(url_for('admin_dashboard'))
+
+# ==========================================
+# ROUTE 8: LIVE CLAUDE SUPPORT + CONVERSATION MEMORY LAYOUT
+# ==========================================
+
+
+@app.route('/support', methods=['GET', 'POST'])
+def customer_support_ai():
+    import anthropic
+
+    # 1. HANDLE HUMAN HANDOVER TERMINAL CHECK
+    customer_room_id = session.get('customer_chat_room_id', '')
+    if customer_room_id and customer_room_id in MASTER_DB["live_chats_database"]:
+        room = MASTER_DB["live_chats_database"][customer_room_id]
+        if request.method == 'POST':
+            msg_text = request.form.get('user_message', '').strip()
+            if msg_text:
+                room["messages"].append(
+                    {"sender": "Guest", "text": msg_text, "time": datetime.now().strftime("%I:%M %p")})
+            return redirect(url_for('customer_support_ai'))
+        return render_template_string(live_chat_room_template(), room=room, is_admin=False)
+
+    # 2. INITIALIZE SESSION CONVERSATION MEMORY BUCKET IF EMPTY
+    if 'ai_chat_history' not in session:
+        session['ai_chat_history'] = []
+
+    ai_response = ""
+    user_query = ""
+
+    if request.method == 'POST':
+        user_query = request.form.get('user_message', '').strip()
+        clean_query = user_query.lower()
+
+        # Human Escalation Trigger
+        if "human" in clean_query or "agent" in clean_query or "support" in clean_query:
+            new_room_id = f"ROOM_{int(time.time())}"
+            session['customer_chat_room_id'] = new_room_id
+            MASTER_DB["assistance_queue"].append({
+                "id": new_room_id, "message": user_query, "timestamp": datetime.now().strftime("%I:%M %p")
+            })
+            MASTER_DB["live_chats_database"][new_room_id] = {
+                "room_id": new_room_id, "initial_query": user_query,
+                "messages": [{"sender": "Guest", "text": user_query, "time": datetime.now().strftime("%I:%M %p")}]
+            }
+            # Clear historical AI logs since they are jumping to a live human room session
+            session.pop('ai_chat_history', None)
+            return redirect(url_for('customer_support_ai'))
+
+        # -----------------------------------------------------------------
+        # CLAUDE LIVE FALLBACK ENGINE (WITH ROLLING CHAT TRACKING HISTORY)
+        # -----------------------------------------------------------------
+        api_key = os.environ.get("ANTHROPIC_API_KEY")
+        if not api_key:
+            ai_response = "❌ <b>System Error:</b> The Anthropic API Key is missing from the server environment setup files."
+        else:
+            try:
+                client = anthropic.Anthropic(api_key=api_key)
+
+                # Fetch our live movie and concessions lists to feed Claude
+                movie_context_string = ""
+                for mid, m in MOVIES.items():
+                    movie_context_string += f"- Movie ID {mid.upper()} is '{m['movie_title']}' screening at {m['show_time_str']} in {m['theatre']}. The Classic row base ticket price is ₹{m['ticket_price']}.\n"
+
+                snack_context_string = ""
+                for sid, s in CONCESSIONS.items():
+                    snack_context_string += f"- {s['item_name']} costs ₹{s['item_price']}.\n"
+
+                system_instructions = (
+                    "You are the active concierge assistant running on our local multiplex server. "
+                    "Never tell the customer you do not have access to prices or showtimes. "
+                    "Use the following real-time database values to answer all visitor questions precisely:\n\n"
+                    "=== ACTIVE MOVIES & SHOWTIMES ===\n"
+                    f"{movie_context_string}\n"
+                    "=== ACTIVE SNACK BAR MENU ===\n"
+                    f"{snack_context_string}\n"
+                    "=== SEATING CONFIGURATION SECTORS ===\n"
+                    "- Rows A and B are VIP Recliners. They cost exactly ₹100 MORE than the base movie rate listed above.\n"
+                    "- All other remaining rows are standard Classic seats at the base rate.\n\n"
+                    "=== PROMO DISCOUNT RULES (STRICT SECURITY) ===\n"
+                    "- You are strictly FORBIDDEN from revealing, disclosing, or hinting at any active promo codes or voucher keywords to the user.\n"
+                    "- If a user asks for a promo code, discount code, coupon, or deal, you must politely inform them that you are not allowed to disclose active promo codes.\n\n"
+                    "=== SYSTEM MANAGEMENT ===\n"
+                    "- If the user specifically asks to speak with a human, agent, or manager, tell them to type the keyword word 'human' to trigger the alert system.\n\n"
+                    "Keep your answer extremely direct, conversational, warm, and under 3 short sentences maximum. Speak confidently about our rates."
+                )
+
+                # Load the running thread history out of cookie parameters
+                rolling_messages = list(session['ai_chat_history'])
+                # Append the customer's newest prompt into the temporary array tracking log
+                rolling_messages.append(
+                    {"role": "user", "content": user_query})
+
+                message = client.messages.create(
+                    model="claude-haiku-4-5-20251001",
+                    max_tokens=250,
+                    temperature=0.2,
+                    system=system_instructions,
+                    # <-- Passes the entire history array payload back to Claude! [1.1]
+                    messages=rolling_messages
+                )
+
+                raw_ai_text = message.content[0].text
+                ai_response = f"🤖 <b>Claude AI:</b> {raw_ai_text}"
+
+                # Commit the current turn to the permanent session cookie storage tracker
+                history_backup = session['ai_chat_history']
+                history_backup.append({"role": "user", "content": user_query})
+                history_backup.append(
+                    {"role": "assistant", "content": raw_ai_text})
+
+                # Limit history memory buffer depth to the last 10 turns to save your API tokens [1.1]
+                if len(history_backup) > 10:
+                    history_backup = history_backup[-10:]
+                session['ai_chat_history'] = history_backup
+
+            except Exception as e:
+                ai_response = f"🤖 <b>Claude AI Error:</b> Connection failed: {str(e)}"
+
+    return render_template_string(support_html_template(), response=ai_response, query=user_query)
+
+# ==========================================
+# ROUTE 9: DEDICATED MONITOR DESK (SMOOTH CALL QUEUE SYNC)
+# ==========================================
+
+
+@app.route('/support-desk')
+def support_management_desk():
+    if not session.get('admin_logged_in'):
+        return redirect(url_for('admin_dashboard'))
+
+    html_template = """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Live Support Dispatch Desk</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <!-- REMOVED META REFRESH BLINKING -->
+        <style>
+            body { font-family: Arial, sans-serif; background-color: #111; color: white; padding: 30px 15px; margin: 0; }
+            .container { max-width: 800px; margin: 0 auto; }
+            .header-bar { border-bottom: 2px solid #333; padding-bottom: 10px; margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; }
+            .ticket-card { background: #1F1F1F; padding: 20px; border-radius: 6px; margin-bottom: 15px; border-left: 5px solid #FF4A4A; box-shadow: 0 4px 10px rgba(0,0,0,0.5); }
+            .btn-talk { background: #3498db; color: white; font-weight: bold; border: none; padding: 8px 15px; border-radius: 4px; text-decoration: none; cursor: pointer; float: right; font-size:13px; margin-left:10px; }
+            .no-tickets { background: #1F1F1F; padding: 30px; border-radius: 6px; text-align: center; border: 1px dashed #333; color: #666; font-size: 16px; }
+        </style>
+    </head>
+    <body>
+        <div class="container" id="desk-dashboard-view">
+            <div class="header-bar">
+                <h1 style="margin:0; font-size:24px; color:#E50914;">🎧 Live Assistance Dispatch Monitor</h1>
+                <span style="background:#333; padding:5px 10px; border-radius:4px; font-size:12px; color:#aaa;">📡 Auto-Sync: Active</span>
+            </div>
+            
+            <div id="tickets-wrapper">
+                {% if tickets %}
+                    {% for ticket in tickets %}
+                    <div class="ticket-card">
+                        <a href="/support-desk/chat/{{ ticket.id }}" class="btn-talk">💬 Open Chat Room & Talk</a>
+                        <strong style="color:#FF4A4A; font-size:14px; letter-spacing:1px;">⚠️ PENDING GUEST ESCALATION</strong>
+                        <div style="margin: 10px 0; font-size:16px; color:#eee;">User Message: <b>"{{ ticket.message }}"</b></div>
+                        <small style="color:#666;">Logged Channel Window at: {{ ticket.timestamp }}</small>
+                        <div style="clear:both;"></div>
+                    </div>
+                    {% endfor %}
+                {% else %}
+                    <div class="no-tickets">🤖 All quiet. No customers are currently requesting human manager session loops.</div>
+                {% endif %}
+            </div>
+            <br>
+            <a href="/admin" style="color:#444; text-decoration:none; font-size:13px; display:block; text-align:center;">&larr; Switch back to Master Operations Dashboard</a>
+        </div>
+
+        <script>
+        let currentTicketCount = {{ tickets | length }};
+
+        async function monitorSupportTickets() {
+            try {
+                const response = await fetch(window.location.href);
+                const htmlText = await response.text();
+                
+                const parser = new DOMParser();
+                const doc = parser.parseFromString(htmlText, 'text/html');
+                const incomingTicketsHTML = doc.getElementById('tickets-wrapper').innerHTML;
+                
+                const oldWrapper = document.getElementById('tickets-wrapper');
+                if (oldWrapper.innerHTML !== incomingTicketsHTML) {
+                    oldWrapper.innerHTML = incomingTicketsHTML;
+                    
+                    // Trigger a loud web audio alert ping ONLY if a BRAND NEW ticket arrives [1.1]
+                    const currentCards = oldWrapper.querySelectorAll('.ticket-card').length;
+                    if (currentCards > currentTicketCount) {
+                        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                        const oscillator = audioCtx.createOscillator();
+                        const gainNode = audioCtx.createGain();
+                        oscillator.type = 'sine'; oscillator.frequency.setValueAtTime(880, audioCtx.currentTime); 
+                        gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime); oscillator.connect(gainNode);
+                        gainNode.connect(audioCtx.destination); oscillator.start(); oscillator.stop(audioCtx.currentTime + 0.25);
+                    }
+                    currentTicketCount = currentCards;
+                }
+            } catch (err) {
+                console.log("Monitor error:", err);
+            }
+        }
+        // Scan for new tickets silently every 3 seconds
+        setInterval(monitorSupportTickets, 3000);
+        </script>
+    </body>
+    </html>
+    """
+    return render_template_string(html_template, tickets=MASTER_DB["assistance_queue"])
+
+# ==========================================
+# ROUTE 10: SECURE MANAGER LIVE INPUT SEND DESK TERMINAL
+# ==========================================
+
+
+@app.route('/support-desk/chat/<room_id>', methods=['GET', 'POST'])
+def admin_chat_room(room_id):
+    if not session.get('admin_logged_in'):
+        return redirect(url_for('admin_dashboard'))
+    if room_id not in MASTER_DB["live_chats_database"]:
+        return redirect(url_for('support_management_desk'))
+
+    room = MASTER_DB["live_chats_database"][room_id]
+
+    if request.method == 'POST':
+        admin_msg = request.form.get('admin_message', '').strip()
+        if admin_msg:
+            room["messages"].append(
+                {"sender": "Manager (You)", "text": admin_msg, "time": datetime.now().strftime("%I:%M %p")})
+            # Clear ticket flag from queue layout since you are actively talking to them
+            MASTER_DB["assistance_queue"] = [
+                t for t in MASTER_DB["assistance_queue"] if t["id"] != room_id]
+        return redirect(url_for('admin_chat_room', room_id=room_id))
+
+    return render_template_string(live_chat_room_template(), room=room, is_admin=True)
+
+
+def live_chat_room_template():
+    return """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Active Live Connection Chat</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <!-- REMOVED THE AGGRESSIVE META REFRESH TAG FOR SMOOTH TYPING -->
+        <style>
+            body { font-family: Arial, sans-serif; background-color: #141414; color: white; padding: 20px 10px; margin: 0; }
+            .chat-box { max-width: 550px; background: #1F1F1F; margin: 0 auto; border-radius: 8px; border-top: 4px solid #3498db; box-shadow: 0 4px 15px rgba(0,0,0,0.5); padding: 20px; box-sizing: border-box; }
+            .messages-container { height: 350px; overflow-y: auto; background: #141414; padding: 15px; border-radius: 6px; border: 1px solid #2d2d2d; margin-bottom: 15px; display: flex; flex-direction: column; gap: 10px; }
+            .msg { max-width: 75%; padding: 10px 14px; border-radius: 6px; font-size: 14px; line-height: 1.4; word-wrap: break-word; }
+            .msg.guest { background: #262626; color: white; align-self: flex-start; border-left: 3px solid #e50914; }
+            .msg.manager { background: #1e3d59; color: #e0f0ff; align-self: flex-end; border-right: 3px solid #3498db; text-align: right; }
+            .input-area { display: flex; gap: 8px; }
+            input[type="text"] { flex-grow: 1; padding: 12px; background: #333; color: white; border: 1px solid #444; border-radius: 4px; font-size: 15px; }
+            button { padding: 12px 20px; background: #3498db; color: white; border: none; font-weight: bold; border-radius: 4px; cursor: pointer; }
+        </style>
+    </head>
+    <body>
+        <div class="chat-box">
+            <h3 style="margin-top:0; color:#3498db;">🌐 Live Ticket Channel: {{ room.room_id }}</h3>
+            <p style="color:#888; font-size:12px; margin-top:-10px;">Connected over Home Wi-Fi LAN Pipeline Channel</p>
+            
+            <div class="messages-container" id="chat-messages">
+                {% for m in room.messages %}
+                    <div class="msg {{ 'manager' if 'Manager' in m.sender else 'guest' }}">
+                        <small style="display:block; color:#888; font-size:10px; margin-bottom:4px;">{{ m.sender }} • {{ m.time }}</small>
+                        <strong>{{ m.text }}</strong>
+                    </div>
+                {% endfor %}
+            </div>
+            
+            <form id="chat-form" method="POST" class="input-area" action="">
+                <input type="text" id="chat-input" name="{{ 'admin_message' if is_admin else 'user_message' }}" placeholder="Type your chat response here..." required autocomplete="off" autofocus>
+                <button type="submit">Send</button>
+            </form>
+            <br>
+            <a href="{{ url_for('support_management_desk') if is_admin else '/' }}" style="color:#555; text-decoration:none; font-size:12px; display:block; text-align:center;">&larr; Exit Chat Terminal Session</a>
+        </div>
+
+        <script>
+            const messageContainer = document.getElementById('chat-messages');
+            messageContainer.scrollTop = messageContainer.scrollHeight;
+
+            // SMART BACKGROUND SYNCING PROCESSOR (ZERO KEYBOARD CRASHES)
+            async function fetchNewMessages() {
+                try {
+                    const response = await fetch(window.location.href);
+                    const htmlText = await response.text();
+                    
+                    // Parse incoming HTML content silently in the background
+                    const parser = new DOMParser();
+                    const doc = parser.parseFromString(htmlText, 'text/html');
+                    const freshMessages = doc.getElementById('chat-messages').innerHTML;
+                    
+                    // Only update the message history box if a fresh message has actually arrived
+                    if (messageContainer.innerHTML !== freshMessages) {
+                        messageContainer.innerHTML = freshMessages;
+                        messageContainer.scrollTop = messageContainer.scrollHeight;
+                    }
+                } catch (err) {
+                    console.log("Background sync error:", err);
+                }
+            }
+
+            // Sync the chat text quietly every 2.5 seconds without blinking the screen
+            setInterval(fetchNewMessages, 2500);
+        </script>
+    </body>
+    </html>
+    """
+
+
+def support_html_template():
+    return """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Cinema AI Assistant</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <style>
+            body { font-family: Arial, sans-serif; background-color: #141414; color: white; padding: 30px 15px; margin: 0; text-align: center; }
+            .chat-card { background: #1F1F1F; width: 100%; max-width: 500px; margin: 20px auto; padding: 25px; border-radius: 8px; border-top: 4px solid #E50914; box-shadow: 0 4px 12px rgba(0,0,0,0.5); text-align: left; box-sizing: border-box; }
+            input[type="text"] { width: 100%; padding: 12px; margin: 15px 0 5px 0; border-radius: 4px; border: 1px solid #333; background: #333; color: white; box-sizing: border-box; font-size: 15px; }
+            button { width: 100%; padding: 12px; background: #E50914; border: none; color: white; font-weight: bold; border-radius: 4px; cursor: pointer; font-size: 16px; margin-top: 10px; }
+            .bubble { background: #262626; padding: 15px; border-radius: 6px; margin-top: 15px; border-left: 3px solid #3498db; font-size: 14px; line-height: 1.5; }
+        </style>
+    </head>
+    <body>
+        <div class="chat-card">
+            <h2 style="margin-top:0; color:#E50914;">🤖 Cinema AI Concierge</h2>
+            <p style="color:#aaa; font-size:13px; margin-top:0;">Ask Claude an intelligent, live question regarding theater rules, pricing combos, or slot configurations.</p>
+            
+            <form method="POST">
+                <input type="text" name="user_message" placeholder="Ask Claude or type 'human' to call manager..." required autocomplete="off" autofocus>
+                <button type="submit">Send Message</button>
+            </form>
+            
+            {% if query %}
+                <div style="font-size:13px; margin-top:20px; color:#888;"><b>Your Query:</b> "{{ query }}"</div>
+            {% endif %}
+            
+            {% if response %}
+                <div class="bubble">
+                    {{ response | safe }}
+                </div>
+            {% endif %}
+            
+            <br>
+            <a href="/" style="color:#666; text-decoration:none; font-size:13px; display:block; text-align:center;">&larr; Back to Client Site</a>
+        </div>
+    </body>
+    </html>
+    """
+
+# ==========================================
+# ROUTE 11: PUBLIC MOVIE REVIEWS & RATINGS BOARD
+# ==========================================
+
+
+@app.route('/reviews', methods=['GET', 'POST'])
+def public_reviews_board():
+    if request.method == 'POST':
+        reviewer_name = request.form.get('reviewer_name', 'Anonymous').strip()
+        selected_movie = request.form.get('review_movie', 'General Experience')
+        star_rating = int(request.form.get('star_rating', 5))
+        review_text = request.form.get('review_text', '').strip()
+
+        if review_text:
+            # Construct review dictionary item payload
+            new_review = {
+                "id": int(time.time() * 1000),  # Unique millisecond identifier
+                "name": reviewer_name if reviewer_name else "Anonymous",
+                "movie": selected_movie,
+                "stars": "⭐" * star_rating,
+                "text": review_text,
+                "date": datetime.now().strftime("%d %b %Y, %I:%M %p")
+            }
+            # Pushes newest reviews to the very top
+            REVIEWS.insert(0, new_review)
+            print(f"✍️ [REVIEW LOG] Added fresh guest feedback: {new_review}")
+            return redirect(url_for('public_reviews_board'))
+
+    html_template = """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Audience Reviews Board</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <style>
+            body { font-family: Arial, sans-serif; background-color: #141414; color: white; padding: 30px 15px; margin: 0; text-align: center; }
+            .container { max-width: 700px; margin: 0 auto; text-align: left; }
+            .form-card { background: #1F1F1F; padding: 20px; border-radius: 8px; border-top: 4px solid #E50914; margin-bottom: 30px; box-shadow: 0 4px 12px rgba(0,0,0,0.5); }
+            input, select, textarea { width: 100%; padding: 10px; margin-top: 5px; margin-bottom: 15px; background: #333; color: white; border: 1px solid #444; border-radius: 4px; box-sizing: border-box; font-size:15px; }
+            button { width: 100%; padding: 12px; background: #E50914; border: none; color: white; font-weight: bold; border-radius: 4px; cursor: pointer; font-size: 16px; }
+            .review-card { background: #1F1F1F; padding: 15px; border-radius: 6px; margin-bottom: 15px; border-left: 4px solid #25D366; }
+            .review-meta { display: flex; justify-content: space-between; font-size: 12px; color: #888; margin-bottom: 8px; }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1 style="color:#E50914; margin-bottom:5px;">🎬 Audience Reviews Hub</h1>
+            <p style="color:#aaa; margin-top:0; margin-bottom:25px;">See what other moviegoers are saying or share your experience!</p>
+            
+            <form class="form-card" method="POST">
+                <label style="font-weight:bold; font-size:14px; color:#ccc;">Your Name:</label>
+                <input type="text" name="reviewer_name" placeholder="John Doe (Leave blank for Anonymous)">
+                
+                <label style="font-weight:bold; font-size:14px; color:#ccc;">Select Movie:</label>
+                <select name="review_movie">
+                    <option value="General Experience">General Multiplex Experience</option>
+                    {% for mid, m in movies.items() %}
+                        <option value="{{ m.movie_title }}">{{ m.movie_title }}</option>
+                    {% endfor %}
+                </select>
+                
+                <label style="font-weight:bold; font-size:14px; color:#ccc;">Rating:</label>
+                <select name="star_rating">
+                    <option value="5">⭐⭐⭐⭐⭐ (Excellent)</option>
+                    <option value="4">⭐⭐⭐⭐ (Good)</option>
+                    <option value="3">⭐⭐⭐ (Average)</option>
+                    <option value="2">⭐⭐ (Poor)</option>
+                    <option value="1">⭐ (Terrible)</option>
+                </select>
+                
+                <label style="font-weight:bold; font-size:14px; color:#ccc;">Written Feedback:</label>
+                <textarea name="review_text" rows="3" placeholder="Share your experience regarding recliners, screen quality, or snacks..." required></textarea>
+                
+                <button type="submit">Publish Review</button>
+            </form>
+            
+            <h3>💬 Recent Audience Feedback ({{ feed | length }})</h3>
+            {% if feed %}
+                {% for r in feed %}
+                <div class="review-card">
+                    <div class="review-meta">
+                        <span><b>{{ r.name }}</b> reviewed <i>{{ r.movie }}</i></span>
+                        <span>{{ r.date }}</span>
+                    </div>
+                    <div style="color:#FFD700; font-size:16px; margin-bottom:6px;">{{ r.stars }}</div>
+                    <div style="font-size:15px; color:#eee; line-height:1.4;">"{{ r.text }}"</div>
+                </div>
+                {% endfor %}
+            {% else %}
+                <p style="color:#444; text-align:center;">No audience reviews published yet. Be the first to share your thoughts!</p>
+            {% endif %}
+            
+            <br>
+            <a href="/" style="color:#666; text-decoration:none; font-size:13px; display:block; text-align:center;">&larr; Back to Movie Listings</a>
+        </div>
+    </body>
+    </html>
+    """
+    return render_template_string(html_template, feed=REVIEWS, movies=MOVIES)
 
 
 if __name__ == '__main__':
